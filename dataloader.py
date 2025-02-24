@@ -90,7 +90,7 @@ class FilePathDataset(torch.utils.data.Dataset):
             masked_index = [m-random_start for m in masked_index if m >= random_start and m < random_start + self.max_seq_length]
 
 
-        masked_phonemes = self.text_cleaner(masked_phonemes)
+        masked_phonemes = self.text_cleaner(masked_phonemes) # TODO: fix this
         labels = self.text_cleaner(labels)
 
         assert len(masked_phonemes) == len(output_token_ids)
