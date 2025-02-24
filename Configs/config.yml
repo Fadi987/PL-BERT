@@ -9,11 +9,11 @@ num_steps: 1000000
 
 dataset_params:
     tokenizer: "aubmindlab/bert-base-arabertv2"
-    token_separator: "P" # token used for phoneme separator (space)
-    token_mask: "M" # token used for phoneme mask
-    word_separator: 87 # token used for word separator (W)
+    phoneme_separator: " " 
+    phoneme_mask: "M"
+    word_separator: 87 # token idx used for word separation (W)
     
-    max_mel_length: 512 # max phoneme length
+    max_seq_length: 512 # max phoneme sequence length
     
     word_mask_prob: 0.15 # probability to select work for prediction
     phoneme_mask_prob: 0.8 # probability to mask phonemes

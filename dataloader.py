@@ -23,23 +23,23 @@ class FilePathDataset(torch.utils.data.Dataset):
                  dataset, 
                  tokenizer,
                  word_separator=3039, #TODO: fix this
-                 token_separator=" ", 
-                 token_mask="M", 
-                 max_mel_length=512,
+                 phoneme_separator=" ", 
+                 phoneme_mask="M", 
+                 max_seq_length=512,
                  word_mask_prob=0.15,
                  phoneme_mask_prob=0.8,
                  replace_prob=0.1):
         
         self.data = dataset
-        self.max_mel_length = max_mel_length
+        self.max_seq_length = max_seq_length
         self.word_mask_prob = word_mask_prob
         self.phoneme_mask_prob = phoneme_mask_prob
         self.replace_prob = replace_prob
         self.text_cleaner = TextCleaner()
         
         self.word_separator = word_separator
-        self.token_separator = token_separator
-        self.token_mask = token_mask
+        self.phoneme_separator = phoneme_separator
+        self.phoneme_mask = phoneme_mask
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
         
     def __len__(self):
@@ -70,7 +70,7 @@ class FilePathDataset(torch.utils.data.Dataset):
                 if action == 'replace':
                     masked_phonemes += ''.join([phoneme_str[np.random.randint(0, len(phoneme_str))] for _ in range(len(token_phonemes))])  # randomized
                 elif action == 'mask':
-                    masked_phonemes += self.token_mask * len(token_phonemes) # masked
+                    masked_phonemes += self.phoneme_mask * len(token_phonemes) # masked
                 else:
                     masked_phonemes += token_phonemes
 
@@ -79,15 +79,15 @@ class FilePathDataset(torch.utils.data.Dataset):
             else:
                 masked_phonemes += token_phonemes
 
-            masked_phonemes += self.token_separator
+            masked_phonemes += self.phoneme_separator
 
-        mel_length = len(masked_phonemes)
-        if mel_length > self.max_mel_length:
-            random_start = np.random.randint(0, mel_length - self.max_mel_length)
-            masked_phonemes = masked_phonemes[random_start:random_start + self.max_mel_length]
-            output_token_ids = output_token_ids[random_start:random_start + self.max_mel_length]
-            labels = labels[random_start:random_start + self.max_mel_length]
-            masked_index = [m-random_start for m in masked_index if m >= random_start and m < random_start + self.max_mel_length]
+        seq_length = len(masked_phonemes)
+        if seq_length > self.max_seq_length:
+            random_start = np.random.randint(0, seq_length - self.max_seq_length)
+            masked_phonemes = masked_phonemes[random_start:random_start + self.max_seq_length]
+            output_token_ids = output_token_ids[random_start:random_start + self.max_seq_length]
+            labels = labels[random_start:random_start + self.max_seq_length]
+            masked_index = [m-random_start for m in masked_index if m >= random_start and m < random_start + self.max_seq_length]
 
 
         masked_phonemes = self.text_cleaner(masked_phonemes)
