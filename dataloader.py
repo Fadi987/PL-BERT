@@ -1,18 +1,10 @@
 #coding: utf-8
 
-import os
-import os.path as osp
-import time
 import random
 import numpy as np
 import random
 
-import string
-import pickle
-
 import torch
-from torch import nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
 from text_utils import TextCleaner
@@ -21,20 +13,22 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+from transformers import AutoTokenizer
+
 np.random.seed(1)
 random.seed(1)
 
 class FilePathDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset,
-                 token_maps="token_maps.pkl",
-                 tokenizer="transfo-xl-wt103",
-                 word_separator=3039, 
+    def __init__(self, 
+                 dataset, 
+                 tokenizer,
+                 word_separator=3039, #TODO: fix this
                  token_separator=" ", 
                  token_mask="M", 
                  max_mel_length=512,
                  word_mask_prob=0.15,
-                 phoneme_mask_prob=0.1,
-                 replace_prob=0.2):
+                 phoneme_mask_prob=0.8,
+                 replace_prob=0.1):
         
         self.data = dataset
         self.max_mel_length = max_mel_length
@@ -46,74 +40,67 @@ class FilePathDataset(torch.utils.data.Dataset):
         self.word_separator = word_separator
         self.token_separator = token_separator
         self.token_mask = token_mask
+        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
         
-        with open(token_maps, 'rb') as handle:
-            self.token_maps = pickle.load(handle)     
-            
     def __len__(self):
         return len(self.data)
 
     def __getitem__(self, idx):
+        token_phonemes = self.data[idx]['phonemes']
+        phoneme_str = ''.join(token_phonemes)
 
-        phonemes = self.data[idx]['phonemes']
-        input_ids = self.data[idx]['input_ids']
+        token_ids = self.data[idx]['input_ids']
+        output_token_ids = []
 
-        words = []
         labels = ""
-        phoneme = ""
+        masked_phonemes = ""
 
-        phoneme_list = ''.join(phonemes)
         masked_index = []
-        for z in zip(phonemes, input_ids):
-            z = list(z)
-            
-            words.extend([z[1]] * len(z[0]))
-            words.append(self.word_separator)
-            labels += z[0] + " "
+        for token_phonemes, token_id in zip(token_phonemes, token_ids):
+            output_token_ids.extend([token_id] * len(token_phonemes))
+            output_token_ids.append(self.word_separator)
+            labels += token_phonemes + " "
 
             if np.random.rand() < self.word_mask_prob:
-                if np.random.rand() < self.replace_prob:
-                    if np.random.rand() < (self.phoneme_mask_prob / self.replace_prob): 
-                        phoneme += ''.join([phoneme_list[np.random.randint(0, len(phoneme_list))] for _ in range(len(z[0]))])  # randomized
-                    else:
-                        phoneme += z[0]
+                # Choose between no change, masking, or replacement based on probabilities
+                choices = ['mask', 'replace', 'no_change']
+                probs = [self.phoneme_mask_prob, self.replace_prob, 1-(self.phoneme_mask_prob+self.replace_prob)]
+                action = np.random.choice(choices, p=probs)
+
+                if action == 'replace':
+                    masked_phonemes += ''.join([phoneme_str[np.random.randint(0, len(phoneme_str))] for _ in range(len(token_phonemes))])  # randomized
+                elif action == 'mask':
+                    masked_phonemes += self.token_mask * len(token_phonemes) # masked
                 else:
-                    phoneme += self.token_mask * len(z[0]) # masked
-                    
-                masked_index.extend((np.arange(len(phoneme) - len(z[0]), len(phoneme))).tolist())
+                    masked_phonemes += token_phonemes
+
+                if action != 'no_change':
+                    masked_index.extend((np.arange(len(masked_phonemes) - len(token_phonemes), len(masked_phonemes))).tolist())
             else:
-                phoneme += z[0] 
+                masked_phonemes += token_phonemes
 
-            phoneme += self.token_separator
+            masked_phonemes += self.token_separator
 
-
-        mel_length = len(phoneme)
-        masked_idx = np.array(masked_index)
-        masked_index = []
+        mel_length = len(masked_phonemes)
         if mel_length > self.max_mel_length:
             random_start = np.random.randint(0, mel_length - self.max_mel_length)
-            phoneme = phoneme[random_start:random_start + self.max_mel_length]
-            words = words[random_start:random_start + self.max_mel_length]
+            masked_phonemes = masked_phonemes[random_start:random_start + self.max_mel_length]
+            output_token_ids = output_token_ids[random_start:random_start + self.max_mel_length]
             labels = labels[random_start:random_start + self.max_mel_length]
-            
-            for m in masked_idx:
-                if m >= random_start and m < random_start + self.max_mel_length:
-                    masked_index.append(m - random_start)
-        else:
-            masked_index = masked_idx
-            
-        phoneme = self.text_cleaner(phoneme)
+            masked_index = [m-random_start for m in masked_index if m >= random_start and m < random_start + self.max_mel_length]
+
+
+        masked_phonemes = self.text_cleaner(masked_phonemes)
         labels = self.text_cleaner(labels)
-        words = [self.token_maps[w]['token'] for w in words]
+
+        assert len(masked_phonemes) == len(output_token_ids)
+        assert len(masked_phonemes) == len(labels)
         
-        assert len(phoneme) == len(words)
-        assert len(phoneme) == len(labels)
-        
-        phonemes = torch.LongTensor(phoneme)
+        masked_phonemes = torch.LongTensor(masked_phonemes)
         labels = torch.LongTensor(labels)
-        words = torch.LongTensor(words)
+        output_token_ids = torch.LongTensor(output_token_ids)
         
-        return phonemes, words, labels, masked_index
+        return masked_phonemes, output_token_ids, labels, masked_index
         
 class Collater(object):
     """
