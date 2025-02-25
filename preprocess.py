@@ -8,6 +8,8 @@ import phonemizer
 from transformers import AutoTokenizer
 import yaml
 
+from phonemize import phonemize
+
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Preprocess text data for phoneme-level BERT training")
@@ -24,12 +26,6 @@ def parse_args():
     parser.add_argument("--max_try_count", type=int, default=3, help="Maximum number of retries for failed shards")
     parser.add_argument("--timeout", type=int, default=300, help="Timeout for processing a single shard (seconds)")
     return parser.parse_args()
-
-def phonemize(text: str, global_phonemizer: Any, tokenizer: Any) -> dict:
-    """Convert text to phonemes and tokenize."""
-    phonemes = global_phonemizer.phonemize([text])[0]
-    tokens = tokenizer.tokenize(phonemes)
-    return {"phonemes": phonemes, "tokens": tokens}
 
 def process_shard(args: Tuple[int, str, Dataset, Any, Any, int]) -> Tuple[int, bool]:
     """Process a single dataset shard."""
