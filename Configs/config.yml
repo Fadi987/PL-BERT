@@ -19,8 +19,6 @@ preprocess_params:
     output_dir: "wikipedia_20231101.ar.processed"
 
 dataset_params:
-    phoneme_separator: " " 
-    phoneme_mask: "M"
     word_separator: 87 # token idx used for word separation (W)
     max_seq_length: 512 # max phoneme sequence length
     word_pred_prob: 0.15 # probability to select work for prediction
