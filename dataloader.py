@@ -153,7 +153,7 @@ class Collater(object):
 
         input_lengths = [0] * batch_size
         batch_masked_indices = [None] * batch_size
-        
+
         for idx, (masked_phonemes, token_ids, phoneme_labels, masked_indices) in enumerate(batch):
             text_size = masked_phonemes.size(0)
             batch_token_ids[idx, :text_size] = token_ids
@@ -164,22 +164,9 @@ class Collater(object):
 
         return batch_token_ids, batch_phoneme_labels, batch_masked_phonemes, input_lengths, batch_masked_indices
 
-def build_dataloader(df,
-                     validation=False,
-                     batch_size=4,
-                     num_workers=1,
-                     device='cpu',
-                     collate_config={},
-                     dataset_config={}):
-
+def build_dataloader(df, validation, device, dataset_config, **kwargs):
     dataset = MaskedPhonemeDataset(df, **dataset_config)
-    collate_fn = Collater(**collate_config)
-    data_loader = DataLoader(dataset,
-                             batch_size=batch_size,
-                             shuffle=(not validation),
-                             num_workers=num_workers,
-                             drop_last=(not validation),
-                             collate_fn=collate_fn,
-                             pin_memory=(device != 'cpu'))
+    collate_fn = Collater()
+    data_loader = DataLoader(dataset, shuffle=(not validation), drop_last=(not validation), collate_fn=collate_fn, pin_memory=(device != 'cpu'), **kwargs)
 
     return data_loader
