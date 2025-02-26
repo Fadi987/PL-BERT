@@ -19,15 +19,9 @@ np.random.seed(1)
 random.seed(1)
 
 class FilePathDataset(torch.utils.data.Dataset):
-    def __init__(self, 
-                 dataset, 
-                 tokenizer,
-                 word_separator=3039, #TODO: fix this
-                 max_seq_length=512,
-                 word_pred_prob=0.15,
-                 phoneme_mask_prob=0.8,
-                 replace_prob=0.1):
-        
+    def __init__(self, dataset, tokenizer, word_pred_prob, phoneme_mask_prob, 
+                 replace_prob, word_separator, max_seq_length):
+
         self.data = dataset
         self.max_seq_length = max_seq_length
         self.word_pred_prob = word_pred_prob
