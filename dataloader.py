@@ -26,13 +26,13 @@ class FilePathDataset(torch.utils.data.Dataset):
                  phoneme_separator=" ", 
                  phoneme_mask="M", 
                  max_seq_length=512,
-                 word_mask_prob=0.15,
+                 word_pred_prob=0.15,
                  phoneme_mask_prob=0.8,
                  replace_prob=0.1):
         
         self.data = dataset
         self.max_seq_length = max_seq_length
-        self.word_mask_prob = word_mask_prob
+        self.word_pred_prob = word_pred_prob
         self.phoneme_mask_prob = phoneme_mask_prob
         self.replace_prob = replace_prob
         self.char_indexer = CharacterIndexer()
@@ -49,26 +49,27 @@ class FilePathDataset(torch.utils.data.Dataset):
         token_phonemes = self.data[idx]['phonemes']
         phoneme_str = ''.join(token_phonemes)
 
-        token_ids = self.data[idx]['input_ids']
+        token_ids = self.data[idx]['token_ids']
         output_token_ids = []
 
-        labels = ""
+        phoneme_labels = ""
         masked_phonemes = ""
 
         masked_index = []
         for token_phonemes, token_id in zip(token_phonemes, token_ids):
             output_token_ids.extend([token_id] * len(token_phonemes))
-            output_token_ids.append(self.word_separator)
-            labels += token_phonemes + " "
+            output_token_ids.append(self.word_separator) # TODO: word separator has to be a special token not used in tokenizing regular text
+            phoneme_labels += token_phonemes + " "
 
-            if np.random.rand() < self.word_mask_prob:
+            if np.random.rand() < self.word_pred_prob:
                 # Choose between no change, masking, or replacement based on probabilities
                 choices = ['mask', 'replace', 'no_change']
                 probs = [self.phoneme_mask_prob, self.replace_prob, 1-(self.phoneme_mask_prob+self.replace_prob)]
                 action = np.random.choice(choices, p=probs)
 
                 if action == 'replace':
-                    masked_phonemes += ''.join([phoneme_str[np.random.randint(0, len(phoneme_str))] for _ in range(len(token_phonemes))])  # randomized
+                    # WARNING: we're doing random replacement of phonemes of the current text which is not ideal. Ideally, we should randomize over the entire phoneme vocabulary
+                    masked_phonemes += ''.join(random.choices(phoneme_str, k=len(token_phonemes)))
                 elif action == 'mask':
                     masked_phonemes += self.phoneme_mask * len(token_phonemes) # masked
                 else:
@@ -86,21 +87,21 @@ class FilePathDataset(torch.utils.data.Dataset):
             random_start = np.random.randint(0, seq_length - self.max_seq_length)
             masked_phonemes = masked_phonemes[random_start:random_start + self.max_seq_length]
             output_token_ids = output_token_ids[random_start:random_start + self.max_seq_length]
-            labels = labels[random_start:random_start + self.max_seq_length]
+            phoneme_labels = phoneme_labels[random_start:random_start + self.max_seq_length]
             masked_index = [m-random_start for m in masked_index if m >= random_start and m < random_start + self.max_seq_length]
 
 
         masked_phonemes = self.char_indexer(masked_phonemes) # TODO: fix this
-        labels = self.char_indexer(labels)
+        phoneme_labels = self.char_indexer(phoneme_labels)
 
         assert len(masked_phonemes) == len(output_token_ids)
-        assert len(masked_phonemes) == len(labels)
+        assert len(masked_phonemes) == len(phoneme_labels)
         
         masked_phonemes = torch.LongTensor(masked_phonemes)
-        labels = torch.LongTensor(labels)
+        phoneme_labels = torch.LongTensor(phoneme_labels)
         output_token_ids = torch.LongTensor(output_token_ids)
         
-        return masked_phonemes, output_token_ids, labels, masked_index
+        return masked_phonemes, output_token_ids, phoneme_labels, masked_index
         
 class Collater(object):
     """
