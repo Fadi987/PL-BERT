@@ -140,43 +140,29 @@ class MaskedPhonemeDataset(torch.utils.data.Dataset):
         return masked_phonemes, phoneme_labels, output_token_ids
 
 class Collater(object):
-    """
-    Args:
-      adaptive_batch_size (bool): if true, decrease batch size when long data comes.
-    """
-
-    def __init__(self, return_wave=False):
-        self.text_pad_index = 0
-        self.return_wave = return_wave
-        
-
     def __call__(self, batch):
-        # batch[0] = wave, mel, text, f0, speakerid
         batch_size = len(batch)
 
-        # sort by mel length
-        lengths = [b[1].shape[0] for b in batch]
-        batch_indexes = np.argsort(lengths)[::-1]
-        batch = [batch[bid] for bid in batch_indexes]
+        # sort by sequence length (descending order)
+        batch = sorted(batch, key=lambda x: x[0].shape[0], reverse=True)
+        max_text_length = batch[0][0].shape[0]
 
-        max_text_length = max([b[1].shape[0] for b in batch])
+        batch_token_ids = torch.zeros((batch_size, max_text_length)).long()
+        batch_phoneme_labels = torch.zeros((batch_size, max_text_length)).long()
+        batch_masked_phonemes = torch.zeros((batch_size, max_text_length)).long()
 
-        words = torch.zeros((batch_size, max_text_length)).long()
-        labels = torch.zeros((batch_size, max_text_length)).long()
-        phonemes = torch.zeros((batch_size, max_text_length)).long()
-        input_lengths = []
-        masked_indices = []
-        for bid, (phoneme, word, label, masked_index) in enumerate(batch):
-            
-            text_size = phoneme.size(0)
-            words[bid, :text_size] = word
-            labels[bid, :text_size] = label
-            phonemes[bid, :text_size] = phoneme
-            input_lengths.append(text_size)
-            masked_indices.append(masked_index)
+        input_lengths = [0] * batch_size
+        batch_masked_indices = [None] * batch_size
+        
+        for idx, (masked_phonemes, token_ids, phoneme_labels, masked_indices) in enumerate(batch):
+            text_size = masked_phonemes.size(0)
+            batch_token_ids[idx, :text_size] = token_ids
+            batch_phoneme_labels[idx, :text_size] = phoneme_labels
+            batch_masked_phonemes[idx, :text_size] = masked_phonemes
+            input_lengths[idx] = text_size
+            batch_masked_indices[idx] = masked_indices
 
-        return words, labels, phonemes, input_lengths, masked_indices
-
+        return batch_token_ids, batch_phoneme_labels, batch_masked_phonemes, input_lengths, batch_masked_indices
 
 def build_dataloader(df,
                      validation=False,
