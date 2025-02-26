@@ -7,7 +7,7 @@ import random
 import torch
 from torch.utils.data import DataLoader
 
-from text_utils import TextCleaner
+from external.pl_bert.char_indexer import CharacterIndexer
 
 import logging
 logger = logging.getLogger(__name__)
@@ -35,7 +35,7 @@ class FilePathDataset(torch.utils.data.Dataset):
         self.word_mask_prob = word_mask_prob
         self.phoneme_mask_prob = phoneme_mask_prob
         self.replace_prob = replace_prob
-        self.text_cleaner = TextCleaner()
+        self.text_cleaner = CharacterIndexer()
         
         self.word_separator = word_separator
         self.phoneme_separator = phoneme_separator
