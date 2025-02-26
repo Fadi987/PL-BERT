@@ -1,20 +1,28 @@
 log_dir: "Checkpoint"
 mixed_precision: "fp16"
-data_folder: "wikipedia_20231101.ar.processed"
 batch_size: 192
 save_interval: 5000
 log_interval: 10
 num_process: 1 # number of GPUs
 num_steps: 1000000
 
-dataset_params:
+preprocess_params:
     tokenizer: "aubmindlab/bert-base-arabertv2"
+    num_shards: 10000
+    max_workers: 32
+    max_try_count: 3
+    timeout: 300
+    phonemizer_language: "ar"
+    preprocess_dir: "data/pl_bert"
+    hf_dataset_name: "wikimedia/wikipedia"
+    hf_dataset_split: "20231101.ar"
+    output_dir: "wikipedia_20231101.ar.processed"
+
+dataset_params:
     phoneme_separator: " " 
     phoneme_mask: "M"
     word_separator: 87 # token idx used for word separation (W)
-    
     max_seq_length: 512 # max phoneme sequence length
-    
     word_mask_prob: 0.15 # probability to select work for prediction
     phoneme_mask_prob: 0.8 # probability to mask phonemes
     replace_prob: 0.1 # probablity to replace phonemes

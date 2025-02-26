@@ -1,6 +1,7 @@
 import os
 import argparse
 import time
+import shutil
 from typing import List, Tuple, Set, Any
 from datasets import load_dataset, load_from_disk, concatenate_datasets, Dataset
 from pebble import ProcessPool
@@ -14,17 +15,8 @@ def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Preprocess text data for phoneme-level BERT training")
     parser.add_argument("--config_path", type=str, default="external/pl_bert/Configs/config.yml", help="Path to config file")
-    parser.add_argument("--dataset_name", type=str, default="wikimedia/wikipedia", help="HuggingFace dataset name")
-    parser.add_argument("--dataset_split", type=str, default="20231101.ar", help="Dataset split to use")
     parser.add_argument("--local_dataset_path", type=str, default=None, help="Path to local dataset (if using local data)")
     parser.add_argument("--use_local_dataset", action="store_true", help="Use local dataset instead of downloading from HuggingFace")
-    parser.add_argument("--phonemizer_language", type=str, default="ar", help="Language for phonemizer")
-    parser.add_argument("--tokenizer_name", type=str, default="aubmindlab/bert-base-arabertv2", help="Tokenizer to use")
-    parser.add_argument("--output_dir", type=str, default="external/pl_bert/wiki_phoneme", help="Directory to save processed shards")
-    parser.add_argument("--num_shards", type=int, default=10000, help="Number of shards to split dataset into")
-    parser.add_argument("--max_workers", type=int, default=32, help="Maximum number of parallel workers")
-    parser.add_argument("--max_try_count", type=int, default=3, help="Maximum number of retries for failed shards")
-    parser.add_argument("--timeout", type=int, default=300, help="Timeout for processing a single shard (seconds)")
     return parser.parse_args()
 
 def process_shard(args: Tuple[int, str, Dataset, Any, Any, int]) -> Tuple[int, bool]:
@@ -132,20 +124,34 @@ def combine_and_save_dataset(datasets: List[Dataset], output_path: str) -> None:
     print(f'Dataset saved to {output_path}')
     print(f'Total samples: {len(final_dataset)}')
 
+def cleanup_shards(root_directory: str) -> None:
+    """Remove all shard directories to clean up disk space."""
+    print("Cleaning up shard directories...")
+    count = 0
+    for dirname in os.listdir(root_directory):
+        if dirname.startswith("shard_") and os.path.isdir(os.path.join(root_directory, dirname)):
+            try:
+                shutil.rmtree(os.path.join(root_directory, dirname))
+                count += 1
+            except Exception as e:
+                print(f"Error removing {dirname}: {str(e)}")
+    print(f"Removed {count} shard directories")
+
 def main():
     """Main function to orchestrate the preprocessing pipeline."""
     args = parse_args()
     
     # Load config
     config = yaml.safe_load(open(args.config_path))
+    preprocess_params = config.get('preprocess_params', {})
     
     # Initialize phonemizer and tokenizer
     global_phonemizer = phonemizer.backend.EspeakBackend(
-        language=args.phonemizer_language, 
+        language=preprocess_params.get('phonemizer_language', 'ar'), 
         preserve_punctuation=True, 
         with_stress=True
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_name)
+    tokenizer = AutoTokenizer.from_pretrained(preprocess_params.get('tokenizer'))
     
     # Load dataset - either from HuggingFace or local path
     if args.use_local_dataset:
@@ -156,19 +162,23 @@ def main():
         dataset = load_from_disk(local_path)
         print(f"Local dataset loaded with {len(dataset)} samples")
     else:
-        print(f"Loading dataset {args.dataset_name} ({args.dataset_split}) from HuggingFace...")
-        dataset = load_dataset(args.dataset_name, args.dataset_split, trust_remote_code=True)['train']
+        hf_dataset_name = preprocess_params.get('hf_dataset_name')
+        hf_dataset_split = preprocess_params.get('hf_dataset_split')
+        print(f"Loading dataset {hf_dataset_name} ({hf_dataset_split}) from HuggingFace...")
+        dataset = load_dataset(hf_dataset_name, hf_dataset_split, trust_remote_code=True)['train']
         print(f"Dataset loaded with {len(dataset)} samples")
     
     # Setup processing parameters
-    root_directory = args.output_dir
+    root_directory = preprocess_params.get('preprocess_dir')
     os.makedirs(root_directory, exist_ok=True)
     
     # Process all shards with retries
-    all_shards = list(range(args.num_shards))
+    num_shards = preprocess_params.get('num_shards')
+    all_shards = list(range(num_shards))
     try_count = 0
+    max_try_count = preprocess_params.get('max_try_count')
     
-    while try_count < args.max_try_count:
+    while try_count < max_try_count:
         try_count += 1
         
         # Check for already processed shards
@@ -179,7 +189,7 @@ def main():
             print("All shards have been processed successfully!")
             break
             
-        print(f"Processing attempt {try_count}/{args.max_try_count} for {len(missing_shards)} shards")
+        print(f"Processing attempt {try_count}/{max_try_count} for {len(missing_shards)} shards")
         
         # Process missing shards
         missing_shards = process_missing_shards(
@@ -188,22 +198,22 @@ def main():
             dataset, 
             global_phonemizer, 
             tokenizer, 
-            args.num_shards, 
-            args.max_workers,
-            args.timeout
+            num_shards, 
+            preprocess_params.get('max_workers'),
+            preprocess_params.get('timeout')
         )
         
         if not missing_shards:
             print("All shards have been processed successfully!")
             break
             
-        if try_count < args.max_try_count:
+        if try_count < max_try_count:
             wait_time = 10 * try_count  # Increase wait time with each retry
             print(f"Waiting {wait_time} seconds before next attempt...")
             time.sleep(wait_time)
     
     if missing_shards:
-        print(f"Warning: {len(missing_shards)} shards could not be processed after {args.max_try_count} attempts")
+        print(f"Warning: {len(missing_shards)} shards could not be processed after {max_try_count} attempts")
         print(f"Missing shards: {missing_shards}")
     
     # Combine all shards
@@ -211,8 +221,12 @@ def main():
     datasets = load_all_shards(root_directory)
     
     # Save final dataset
-    output_path = config.get('data_folder', os.path.join(args.output_dir, 'final_dataset'))
+    output_dir = preprocess_params.get('output_dir')
+    output_path = os.path.join(root_directory, output_dir)
     combine_and_save_dataset(datasets, output_path)
+    
+    # Clean up shard directories to free disk space
+    cleanup_shards(root_directory)
 
 if __name__ == "__main__":
     main()
