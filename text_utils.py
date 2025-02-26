@@ -1,31 +1,21 @@
 # IPA Phonemizer: https://github.com/bootphon/phonemizer
 
-import os
-import string
-
 _pad = "$"
 _punctuation = ';:,.!?¡¿—…"«»“” '
-_letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'
+_letters = 'ابتثجحخدذرزسشصضطظعغفقكلمنهويءآأؤإئى'
 _letters_ipa = "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘'̩'ᵻ"
+# NOTE: 'U' is a valid 'unknown' character because it is different from all the characters above it. In English PL-BERT that was not the case which was not ideal
+_unknown='U'
 
 # Export all symbols:
-symbols = [_pad] + list(_punctuation) + list(_letters) + list(_letters_ipa)
+symbols = [_pad] + list(_punctuation) + list(_letters) + list(_letters_ipa) + [_unknown]
 
-letters = list(_letters) + list(_letters_ipa)
+assert len(symbols) == len(set(symbols)) # no duplicates
 
-dicts = {}
-for i in range(len((symbols))):
-    dicts[symbols[i]] = i
+class CharacterIndexer:
+    def __init__(self):
+        self.word_index_dictionary = {symbol: i for i, symbol in enumerate(symbols)}
 
-class TextCleaner:
-    def __init__(self, dummy=None):
-        self.word_index_dictionary = dicts
-        print(len(dicts))
     def __call__(self, text):
-        indexes = []
-        for char in text:
-            try:
-                indexes.append(self.word_index_dictionary[char])
-            except KeyError:
-                indexes.append(self.word_index_dictionary['U']) # unknown token
-        return indexes
+        return [self.word_index_dictionary[char] if char in self.word_index_dictionary 
+                else self.word_index_dictionary[_unknown] for char in text]
