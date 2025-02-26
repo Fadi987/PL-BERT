@@ -9,7 +9,7 @@ num_steps: 1000000
 preprocess_params:
     tokenizer: "aubmindlab/bert-base-arabertv2"
     num_shards: 10000
-    max_workers: 32
+    max_workers: 25
     max_try_count: 3
     timeout: 300
     phonemizer_language: "ar"
