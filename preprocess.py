@@ -11,7 +11,7 @@ import phonemizer
 from transformers import AutoTokenizer
 import yaml
 from num2words import num2words
-from text_normalize import normalize_text, remove_accents
+from text_normalize import remove_accents
 
 def convert_numbers_to_arabic_words(text):
     """Convert English numerals in Arabic text to Arabic word form."""
@@ -60,7 +60,8 @@ def phonemize(text, global_phonemizer, tokenizer):
     text = convert_numbers_to_arabic_words(text)
     text = filter_non_arabic_words(text)
 
-    text = normalize_text(remove_accents(text))
+    text = remove_accents(text)
+    # TODO: English PL-BERT uses normalize_text, but Arabic PL-BERT does not and may need to use in the future. However, the code is highly manual and the Arabic version implementation TBD.
     tokens = tokenizer.tokenize(text)
 
     token_ids = [tokenizer.convert_tokens_to_ids(token) for token in tokens]
