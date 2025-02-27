@@ -1,5 +1,4 @@
 # Standard library imports
-from collections import OrderedDict
 import os
 import shutil
 import yaml
