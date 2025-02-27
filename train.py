@@ -19,7 +19,7 @@ from dataloader import build_dataloader
 from model import MultiTaskModel
 from char_indexer import symbols
 
-config_path = "Configs/config.yml" # you can change it to anything else
+config_path = "external/pl_bert/Configs/config.yml" # you can change it to anything else
 config = yaml.safe_load(open(config_path))
 training_params = config['training_params']
 
@@ -38,7 +38,7 @@ save_interval = training_params['save_interval']
 
 def length_to_mask(lengths):
     batch_size = lengths.size(0)
-    max_len = lengths.max()
+    max_len = int(lengths.max().item())
 
     # Create position indices tensor: [[0,1,2,...], [0,1,2,...], ...]
     positions = torch.arange(max_len, device=lengths.device).expand(batch_size, max_len)
@@ -98,7 +98,7 @@ def load_checkpoint(model, optimizer, log_dir, last_iter, accelerator):
         tuple: (model, optimizer) with loaded state
     """
     checkpoint_path = os.path.join(log_dir, f"step_{last_iter}.pth")
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
+    checkpoint = torch.load(checkpoint_path, map_location=accelerator.device)
     
     # Remove 'module.' prefix from keys if present
     new_state_dict = {k.replace('module.', ''): v for k, v in checkpoint['net'].items()}
@@ -157,6 +157,7 @@ def calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_i
 
 def train():
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(mixed_precision=training_params['mixed_precision'], split_batches=True, kwargs_handlers=[ddp_kwargs])
     
     curr_steps = 0
     
@@ -173,7 +174,7 @@ def train():
     
     batch_size = training_params['batch_size']
     train_dataloader = build_dataloader(
-        dataset, validation=False, batch_size=batch_size, num_workers=0, device='cpu', dataset_config=config['dataset_params'])
+        dataset, validation=False, batch_size=batch_size, num_workers=0, device=accelerator.device, dataset_config=config['dataset_params'])
 
     albert_base_configuration = AlbertConfig(**config['model_params'])
     
@@ -183,8 +184,7 @@ def train():
     
     is_checkpoint_found, current_step = find_latest_checkpoint(log_dir)
     
-    optimizer = AdamW(bert.parameters(), lr=training_params['learning_rate'])
-    accelerator = Accelerator(mixed_precision=training_params['mixed_precision'], split_batches=True, kwargs_handlers=[ddp_kwargs])
+    optimizer = AdamW(bert.parameters(), lr=float(training_params['learning_rate']))
     
     if is_checkpoint_found:
         bert, optimizer = load_checkpoint(bert, optimizer, log_dir, current_step, accelerator)
@@ -200,8 +200,8 @@ def train():
         curr_steps += 1
         
         token_ids, phoneme_labels, masked_phonemes, input_lengths, masked_indices = batch
-        text_mask = length_to_mask(torch.Tensor(input_lengths))# .to(device)
-        
+        text_mask = length_to_mask(torch.Tensor(input_lengths)).to(accelerator.device)
+
         phoneme_pred, token_pred = bert(masked_phonemes, attention_mask=(~text_mask).int())
         
         loss_token = calculate_token_loss(token_pred, token_ids, input_lengths, criterion)
@@ -235,6 +235,5 @@ def train():
         if curr_steps > num_steps:
             return
 
-from accelerate import notebook_launcher
-while True:
-    notebook_launcher(train, args=(), num_processes=3, use_port=33389)
+if __name__ == "__main__":
+    train()

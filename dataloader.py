@@ -13,13 +13,11 @@ import logging
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-from transformers import AutoTokenizer
-
 np.random.seed(1)
 random.seed(1)
 
 class MaskedPhonemeDataset(torch.utils.data.Dataset):
-    def __init__(self, dataset, tokenizer, word_pred_prob, phoneme_mask_prob, 
+    def __init__(self, dataset, word_pred_prob, phoneme_mask_prob, 
                  replace_prob, word_separator, max_seq_length):
 
         self.data = dataset
@@ -30,7 +28,6 @@ class MaskedPhonemeDataset(torch.utils.data.Dataset):
         self.char_indexer = CharacterIndexer()
         
         self.word_separator = word_separator
-        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer)
         
     def __len__(self):
         return len(self.data)
