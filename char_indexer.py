@@ -1,7 +1,9 @@
 # IPA Phonemizer: https://github.com/bootphon/phonemizer
 
+import string
+
 PAD = "$"
-PUNCTUATION = ';:,.!?¡¿—…"«»“”'
+PUNCTUATION = ''.join(sorted(set(';:,.!?¡¿—…"«»""،؛؟٫٬٪﴾﴿ـ' + string.punctuation)))
 LETTERS = 'ابتثجحخدذرزسشصضطظعغفقكلمنهويءآأؤإئى'
 LETTERS_IPA = "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘'̩ᵻ"
 PHONEME_MASK = "#"

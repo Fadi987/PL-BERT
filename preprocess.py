@@ -3,7 +3,6 @@ import argparse
 import time
 import shutil
 import re
-import string
 from typing import List, Tuple, Set, Any
 from datasets import load_dataset, load_from_disk, concatenate_datasets, Dataset
 from pebble import ProcessPool
@@ -12,6 +11,8 @@ from transformers import AutoTokenizer
 import yaml
 from num2words import num2words
 from text_normalize import remove_accents
+
+from char_indexer import PUNCTUATION
 
 def convert_numbers_to_arabic_words(text):
     """Convert English numerals in Arabic text to Arabic word form."""
@@ -65,7 +66,7 @@ def phonemize(text, global_phonemizer, tokenizer):
     tokens = tokenizer.tokenize(text)
 
     token_ids = [tokenizer.convert_tokens_to_ids(token) for token in tokens]
-    phonemes = [global_phonemizer.phonemize([token.replace("#", "")], strip=True)[0] if token not in string.punctuation else token for token in tokens]
+    phonemes = [global_phonemizer.phonemize([token.replace("#", "")], strip=True)[0] if token not in PUNCTUATION else token for token in tokens]
         
     return {'token_ids' : token_ids, 'phonemes': phonemes}
 
