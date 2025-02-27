@@ -1,30 +1,29 @@
+# Standard library imports
 import os
-import shutil
 import os.path as osp
-
-import torch
-from torch import nn
-
-from accelerate import Accelerator
-
-from transformers import AdamW
-from transformers import AlbertConfig, AlbertModel
-from accelerate import DistributedDataParallelKwargs
-
-from model import MultiTaskModel
-from dataloader import build_dataloader
-from utils import length_to_mask
-
-from datasets import load_from_disk
-
+import shutil
 import yaml
 
+# Third-party imports
+import torch
+from torch import nn
+from datasets import load_from_disk
+
+# Accelerate imports
+from accelerate import Accelerator, DistributedDataParallelKwargs
+
+# Transformers imports
+from transformers import AdamW, AlbertConfig, AlbertModel, AutoTokenizer
+
+# Local imports
+from dataloader import build_dataloader
+from model import MultiTaskModel
+from utils import length_to_mask
 from char_indexer import symbols
 
 config_path = "Configs/config.yml" # you can change it to anything else
 config = yaml.safe_load(open(config_path))
 
-from transformers import AutoTokenizer
 tokenizer = AutoTokenizer.from_pretrained(config['preprocess_params']['tokenizer'])
 
 criterion = nn.CrossEntropyLoss() # F0 loss (regression)
