@@ -4,10 +4,8 @@ import os.path as osp
 
 import torch
 from torch import nn
-import torch.nn.functional as F
 
 from accelerate import Accelerator
-from accelerate.utils import LoggerType
 
 from transformers import AdamW
 from transformers import AlbertConfig, AlbertModel
@@ -15,13 +13,13 @@ from accelerate import DistributedDataParallelKwargs
 
 from model import MultiTaskModel
 from dataloader import build_dataloader
-from utils import length_to_mask, scan_checkpoint
+from utils import length_to_mask
 
 from datasets import load_from_disk
 
-from char_indexer import symbols
-
 import yaml
+
+from char_indexer import symbols
 
 config_path = "Configs/config.yml" # you can change it to anything else
 config = yaml.safe_load(open(config_path))
