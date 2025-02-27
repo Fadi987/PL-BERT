@@ -2,22 +2,17 @@
 
 import string
 
-PAD = "⌑"
+PAD = "Ø"
 PUNCTUATION = ''.join(sorted(set(';:,.!?¡¿—…"«»“”‘’،؛؟٫٬٪﴾﴿ـ' + string.punctuation)))
-LETTERS = 'ابتثجحخدذرزسشصضطظعغفقكلمنهويءآأؤإئى'
 LETTERS_IPA = 'ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘̩ᵻ'
-PHONEME_MASK = "■"
+LATIN_LETTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+PHONEME_MASK = "×"
 PHONEME_SEPARATOR = " "
-# NOTE: '░' is a valid 'unknown' character because it is different from all the characters above it. In English PL-BERT, 'U' was used as the unknown character which was not ideal as it was part of the English alphabet
-UNKNOWN='░'
+# NOTE: '¤' is a valid 'unknown' character because it is different from all the characters above it. In English PL-BERT, 'U' was used as the unknown character which was not ideal as it was part of the English alphabet
+UNKNOWN='¤'
 
 # Export all symbols:
-symbols = [PAD] + list(PUNCTUATION) + list(LETTERS) + list(LETTERS_IPA) + [PHONEME_MASK] + [PHONEME_SEPARATOR] + [UNKNOWN]
-
-assert len(symbols) == len(set(symbols)) # no duplicates
-
-# Export all symbols:
-symbols = [PAD] + list(PUNCTUATION) + list(LETTERS) + list(LETTERS_IPA) + [PHONEME_MASK] + [PHONEME_SEPARATOR] + [UNKNOWN]
+symbols = [PAD] + list(PUNCTUATION) + list(LETTERS_IPA) + list(LATIN_LETTERS) + [PHONEME_MASK] + [PHONEME_SEPARATOR] + [UNKNOWN]
 
 assert len(symbols) == len(set(symbols)) # no duplicates
 
