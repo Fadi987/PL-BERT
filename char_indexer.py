@@ -4,10 +4,10 @@ PAD = "$"
 PUNCTUATION = ';:,.!?¡¿—…"«»“”'
 LETTERS = 'ابتثجحخدذرزسشصضطظعغفقكلمنهويءآأؤإئى'
 LETTERS_IPA = "ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘'̩ᵻ"
-# NOTE: 'U' is a valid 'unknown' character because it is different from all the characters above it. In English PL-BERT that was not the case which was not ideal
-PHONEME_MASK = "M"
+PHONEME_MASK = "#"
 PHONEME_SEPARATOR = " "
-UNKNOWN='U'
+# NOTE: 'µ' is a valid 'unknown' character because it is different from all the characters above it. In English PL-BERT, U was used as the unknown character which was not ideal
+UNKNOWN='µ'
 
 # Export all symbols:
 symbols = [PAD] + list(PUNCTUATION) + list(LETTERS) + list(LETTERS_IPA) + [PHONEME_MASK] + [PHONEME_SEPARATOR] + [UNKNOWN]
