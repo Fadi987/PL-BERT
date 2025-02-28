@@ -56,19 +56,63 @@ def filter_non_arabic_words(text):
     # Join the Arabic words back into text
     return ' '.join(arabic_words)
 
-def phonemize(text, global_phonemizer, tokenizer):
-    """Convert text to phonemes and token IDs."""
+def separate_words_and_punctuation(text):
+    """
+    Separate text into a list of words and punctuation using regex for better performance.
+    Punctuation marks are treated as separate tokens.
+    """
+    # Create a regex pattern that matches either a punctuation character or a non-space, non-punctuation sequence
+    # We escape each punctuation character and join them into a character class
+    punct_pattern = '|'.join(re.escape(p) for p in PUNCTUATION)
+    pattern = f'({punct_pattern})|([^\s{re.escape("".join(PUNCTUATION))}]+)'
+    
+    # Find all matches
+    tokens = re.findall(pattern, text)
+    
+    # Flatten the list of tuples and remove empty strings
+    result = [t[0] if t[0] else t[1] for t in tokens]
+    
+    return result
+
+def phonemize(text, global_phonemizer, tokenizer=None, use_tokenizer=True):
+    """Convert text to phonemes and token IDs.
+    
+    Args:
+        text: Input text to phonemize
+        global_phonemizer: Phonemizer instance
+        tokenizer: Tokenizer instance (optional if use_tokenizer=False)
+        use_tokenizer: Whether to use tokenizer or simple word separation
+        
+    Returns:
+        Dictionary containing phonemes and optionally token_ids
+    """
+    # Common preprocessing steps
     text = convert_numbers_to_arabic_words(text)
     text = filter_non_arabic_words(text)
-
     text = remove_accents(text)
-    # TODO: English PL-BERT uses normalize_text, but Arabic PL-BERT does not and may need to use in the future. However, the code is highly manual and the Arabic version implementation TBD.
-    tokens = tokenizer.tokenize(text)
-
-    token_ids = [tokenizer.convert_tokens_to_ids(token) for token in tokens]
-    phonemes = [global_phonemizer.phonemize([token.replace("#", "")], strip=True)[0] if token not in PUNCTUATION else token for token in tokens]
+    
+    # Tokenization step - either using tokenizer or simple word separation
+    if use_tokenizer:
+        if tokenizer is None:
+            raise ValueError("Tokenizer must be provided when use_tokenizer=True")
+        tokens = tokenizer.tokenize(text)
+        token_ids = [tokenizer.convert_tokens_to_ids(token) for token in tokens]
+        # Process phonemes with tokenizer-specific handling
+        phonemes = [global_phonemizer.phonemize([token.replace("#", "")], strip=True)[0] 
+                   if token not in PUNCTUATION else token for token in tokens]
+    else:
+        tokens = separate_words_and_punctuation(text)
+        token_ids = None
+        # Process phonemes without tokenizer-specific handling
+        phonemes = [global_phonemizer.phonemize([token], strip=True)[0] 
+                   if token not in PUNCTUATION else token for token in tokens]
+    
+    # Return appropriate result based on tokenization method
+    result = {'phonemes': phonemes}
+    if use_tokenizer:
+        result['token_ids'] = token_ids
         
-    return {'token_ids' : token_ids, 'phonemes': phonemes}
+    return result
 
 def parse_args():
     """Parse command line arguments."""

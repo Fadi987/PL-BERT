@@ -18,7 +18,7 @@ random.seed(1)
 
 class MaskedPhonemeDataset(torch.utils.data.Dataset):
     def __init__(self, dataset, word_pred_prob, phoneme_mask_prob, 
-                 replace_prob, word_separator, max_seq_length):
+                 replace_prob, word_separator, max_seq_length, use_token_ids=True):
 
         self.data = dataset
         self.max_seq_length = max_seq_length
@@ -26,8 +26,8 @@ class MaskedPhonemeDataset(torch.utils.data.Dataset):
         self.phoneme_mask_prob = phoneme_mask_prob
         self.replace_prob = replace_prob
         self.char_indexer = CharacterIndexer()
-        
         self.word_separator = word_separator
+        self.use_token_ids = use_token_ids
         
     def __len__(self):
         return len(self.data)
@@ -35,7 +35,9 @@ class MaskedPhonemeDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         token_phonemes = self.data[idx]['phonemes']
         phoneme_str = ''.join(token_phonemes)
-        token_ids = self.data[idx]['token_ids']
+        
+        # Get token_ids if available and needed, otherwise use placeholder
+        token_ids = self.data[idx]['token_ids'] if self.use_token_ids else [self.word_separator] * len(token_phonemes)
         
         # Process tokens to create masked phonemes and labels
         output_token_ids, phoneme_labels, masked_phonemes, masked_index = self._process_tokens(
@@ -49,7 +51,10 @@ class MaskedPhonemeDataset(torch.utils.data.Dataset):
         masked_phonemes, phoneme_labels, output_token_ids = self._convert_to_tensors(
             masked_phonemes, phoneme_labels, output_token_ids)
         
-        return masked_phonemes, output_token_ids, phoneme_labels, masked_index
+        if self.use_token_ids:
+            return output_token_ids, phoneme_labels, masked_phonemes, masked_index
+        else:
+            return phoneme_labels, masked_phonemes, masked_index
     
     def _process_tokens(self, token_phonemes, token_ids, phoneme_str):
         """Process tokens to create masked phonemes, labels, and track masked indices."""
@@ -151,7 +156,7 @@ class Collater(object):
         input_lengths = [0] * batch_size
         batch_masked_indices = [None] * batch_size
 
-        for idx, (masked_phonemes, token_ids, phoneme_labels, masked_indices) in enumerate(batch):
+        for idx, (token_ids, phoneme_labels, masked_phonemes, masked_indices) in enumerate(batch):
             text_size = masked_phonemes.size(0)
             batch_token_ids[idx, :text_size] = token_ids
             batch_phoneme_labels[idx, :text_size] = phoneme_labels
@@ -161,9 +166,39 @@ class Collater(object):
 
         return batch_token_ids, batch_phoneme_labels, batch_masked_phonemes, input_lengths, batch_masked_indices
 
-def build_dataloader(df, validation, device, dataset_config, **kwargs):
-    dataset = MaskedPhonemeDataset(df, **dataset_config)
-    collate_fn = Collater()
-    data_loader = DataLoader(dataset, shuffle=(not validation), drop_last=(not validation), collate_fn=collate_fn, pin_memory=(device != 'cpu'), **kwargs)
+def build_dataloader(df, validation, device, dataset_config, use_token_ids=True, **kwargs):
+    dataset = MaskedPhonemeDataset(df, use_token_ids=use_token_ids, **dataset_config)
+    
+    # Use appropriate collator based on whether we're using token_ids
+    if use_token_ids:
+        collate_fn = Collater()
+    else:
+        collate_fn = PhonemeOnlyCollater()
+    
+    data_loader = DataLoader(dataset, shuffle=(not validation), drop_last=(not validation), 
+                            collate_fn=collate_fn, pin_memory=(device != 'cpu'), **kwargs)
 
     return data_loader
+
+class PhonemeOnlyCollater(object):
+    def __call__(self, batch):
+        batch_size = len(batch)
+
+        # sort by sequence length (descending order)
+        batch = sorted(batch, key=lambda x: x[0].shape[0], reverse=True)
+        max_text_length = batch[0][0].shape[0]
+
+        batch_phoneme_labels = torch.zeros((batch_size, max_text_length)).long()
+        batch_masked_phonemes = torch.zeros((batch_size, max_text_length)).long()
+
+        input_lengths = [0] * batch_size
+        batch_masked_indices = [None] * batch_size
+
+        for idx, (phoneme_labels, masked_phonemes, masked_indices) in enumerate(batch):
+            text_size = masked_phonemes.size(0)
+            batch_phoneme_labels[idx, :text_size] = phoneme_labels
+            batch_masked_phonemes[idx, :text_size] = masked_phonemes
+            input_lengths[idx] = text_size
+            batch_masked_indices[idx] = masked_indices
+
+        return batch_masked_phonemes, batch_phoneme_labels, input_lengths, batch_masked_indices
