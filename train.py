@@ -2,6 +2,7 @@
 import os
 import shutil
 import yaml
+import argparse
 
 # Third-party imports
 import torch
@@ -19,7 +20,14 @@ from dataloader import build_dataloader
 from model import MultiTaskModel
 from char_indexer import symbols
 
-config_path = "external/pl_bert/configs/config.yml" # you can change it to anything else
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Train phoneme-level BERT model")
+    parser.add_argument("--config_path", type=str, default="external/pl_bert/configs/config.yml", help="Path to config file")
+    return parser.parse_args()
+
+args = parse_args()
+config_path = args.config_path
 config = yaml.safe_load(open(config_path))
 training_params = config['training_params']
 
