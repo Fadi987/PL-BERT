@@ -29,6 +29,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train phoneme-level BERT model")
     parser.add_argument("--config_path", type=str, default="external/pl_bert/configs/config.yml", help="Path to config file")
     parser.add_argument("--run_name", type=str, default="default", help="Name of the run for organizing checkpoints")
+    parser.add_argument("--resume", action="store_true", default=False, help="Resume training from latest checkpoint")
     return parser.parse_args()
 
 args = parse_args()
@@ -193,8 +194,30 @@ def train():
     # Create log directory with run name to avoid overriding files
     base_log_dir = training_params['output_dir']
     log_dir = os.path.join(base_log_dir, args.run_name)
-    if not os.path.exists(log_dir): os.makedirs(log_dir, exist_ok=True)
-    shutil.copy(config_path, os.path.join(log_dir, os.path.basename(config_path)))
+    
+    # Handle resume flag
+    if args.resume:
+        if not os.path.exists(log_dir):
+            raise FileNotFoundError(f"Cannot resume training: Run directory '{log_dir}' not found.")
+        
+        config_file = os.path.join(log_dir, os.path.basename(config_path))
+        if not os.path.exists(config_file):
+            raise FileNotFoundError(f"Cannot resume training: Config file not found in '{log_dir}'.")
+        
+        # Use the config from the run directory instead of the provided one
+        config = yaml.safe_load(open(config_file))
+        training_params = config['training_params']
+        accelerator.print(f"Resuming training from '{log_dir}' with existing config.")
+    else:
+        # Start from scratch - remove existing directory if it exists
+        if os.path.exists(log_dir):
+            shutil.rmtree(log_dir)
+        
+        # Create fresh directory
+        os.makedirs(log_dir, exist_ok=True)
+        # Copy the config file to the run directory
+        shutil.copy(config_path, os.path.join(log_dir, os.path.basename(config_path)))
+        accelerator.print(f"Starting new training run in '{log_dir}'.")
     
     batch_size = training_params['batch_size']
     train_dataloader = build_dataloader(
@@ -210,8 +233,10 @@ def train():
     
     optimizer = AdamW(bert.parameters(), lr=float(training_params['learning_rate']))
     
-    if is_checkpoint_found:
+    if is_checkpoint_found and args.resume:
         bert, optimizer = load_checkpoint(bert, optimizer, log_dir, current_step, accelerator)
+    else:
+        current_step = 0
     
     bert, optimizer, train_dataloader = accelerator.prepare(
         bert, optimizer, train_dataloader
