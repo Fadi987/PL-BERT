@@ -32,24 +32,6 @@ def parse_args():
     parser.add_argument("--resume", action="store_true", default=False, help="Resume training from latest checkpoint")
     return parser.parse_args()
 
-args = parse_args()
-config_path = args.config_path
-config = yaml.safe_load(open(config_path))
-training_params = config['training_params']
-
-tokenizer = AutoTokenizer.from_pretrained(config['preprocess_params']['tokenizer'])
-
-criterion = nn.CrossEntropyLoss() # F0 loss (regression)
-
-best_loss = float('inf')  # best test loss
-start_epoch = 0  # start from epoch 0 or last checkpoint epoch
-loss_train_record = list([])
-loss_test_record = list([])
-
-num_steps = training_params['num_steps']
-log_interval = training_params['log_interval']
-save_interval = training_params['save_interval']
-
 def length_to_mask(lengths):
     batch_size = lengths.size(0)
     max_len = int(lengths.max().item())
@@ -170,14 +152,67 @@ def calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_i
     return loss_phoneme
 
 def train():
+    args = parse_args()
+    config_path = args.config_path
+    
+    # Create log directory with run name to avoid overriding files
+    base_log_dir = None  # Will be set from config
+    log_dir = None  # Will be set after loading config
+    
+    # Load the appropriate config based on resume flag
+    if args.resume:
+        # When resuming, first check if the run directory exists
+        base_log_dir = yaml.safe_load(open(config_path))['training_params']['output_dir']
+        log_dir = os.path.join(base_log_dir, args.run_name)
+        
+        if not os.path.exists(log_dir):
+            raise FileNotFoundError(f"Cannot resume training: Run directory '{log_dir}' not found.")
+        
+        # Use the config from the run directory instead of the provided one
+        config_file = os.path.join(log_dir, os.path.basename(config_path))
+        if not os.path.exists(config_file):
+            raise FileNotFoundError(f"Cannot resume training: Config file not found in '{log_dir}'.")
+        
+        config = yaml.safe_load(open(config_file))
+    else:
+        # For new runs, use the provided config
+        config = yaml.safe_load(open(config_path))
+    
+    # Extract all necessary parameters from config
+    training_params = config['training_params']
+    num_steps = training_params['num_steps']
+    log_interval = training_params['log_interval']
+    save_interval = training_params['save_interval']
+    base_log_dir = training_params['output_dir']
+    log_dir = os.path.join(base_log_dir, args.run_name)
+    
+    # Initialize tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(config['preprocess_params']['tokenizer'])
+    
+    # Initialize loss function
+    criterion = nn.CrossEntropyLoss()
+    
+    # Initialize accelerator
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(mixed_precision=training_params['mixed_precision'], split_batches=True, kwargs_handlers=[ddp_kwargs])
+    
+    # Handle directory setup
+    if args.resume:
+        accelerator.print(f"Resuming training from '{log_dir}' with existing config.")
+    else:
+        # Start from scratch - remove existing directory if it exists
+        if os.path.exists(log_dir):
+            shutil.rmtree(log_dir)
+        
+        # Create fresh directory
+        os.makedirs(log_dir, exist_ok=True)
+        # Copy the config file to the run directory
+        shutil.copy(config_path, os.path.join(log_dir, os.path.basename(config_path)))
+        accelerator.print(f"Starting new training run in '{log_dir}'.")
     
     # Initialize wandb
     if accelerator.is_main_process:
         wandb.init(project="pl-bert", config=config)
-    
-    curr_steps = 0
     
     # Initialize rolling window queues for losses
     token_losses = deque(maxlen=log_interval)
@@ -190,34 +225,6 @@ def train():
         config['preprocess_params']['output_dir']
     )
     dataset = load_from_disk(dataset_path)
-
-    # Create log directory with run name to avoid overriding files
-    base_log_dir = training_params['output_dir']
-    log_dir = os.path.join(base_log_dir, args.run_name)
-    
-    # Handle resume flag
-    if args.resume:
-        if not os.path.exists(log_dir):
-            raise FileNotFoundError(f"Cannot resume training: Run directory '{log_dir}' not found.")
-        
-        config_file = os.path.join(log_dir, os.path.basename(config_path))
-        if not os.path.exists(config_file):
-            raise FileNotFoundError(f"Cannot resume training: Config file not found in '{log_dir}'.")
-        
-        # Use the config from the run directory instead of the provided one
-        config = yaml.safe_load(open(config_file))
-        training_params = config['training_params']
-        accelerator.print(f"Resuming training from '{log_dir}' with existing config.")
-    else:
-        # Start from scratch - remove existing directory if it exists
-        if os.path.exists(log_dir):
-            shutil.rmtree(log_dir)
-        
-        # Create fresh directory
-        os.makedirs(log_dir, exist_ok=True)
-        # Copy the config file to the run directory
-        shutil.copy(config_path, os.path.join(log_dir, os.path.basename(config_path)))
-        accelerator.print(f"Starting new training run in '{log_dir}'.")
     
     batch_size = training_params['batch_size']
     train_dataloader = build_dataloader(
@@ -243,9 +250,8 @@ def train():
     )
 
     accelerator.print('Start training...')
-
     for _, batch in enumerate(train_dataloader):        
-        curr_steps += 1
+        current_step += 1
         
         token_ids, phoneme_labels, masked_phonemes, input_lengths, masked_indices = batch
         text_mask = length_to_mask(torch.Tensor(input_lengths)).to(accelerator.device)
@@ -299,7 +305,7 @@ def train():
             accelerator.save(state, checkpoint_path)
             accelerator.print(f'Checkpoint saved at: {checkpoint_path}')
 
-        if curr_steps > num_steps:
+        if current_step > num_steps:
             return
 
 if __name__ == "__main__":
