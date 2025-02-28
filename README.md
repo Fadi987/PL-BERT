@@ -31,7 +31,7 @@ Please refer to the notebook [preprocess.ipynb](https://github.com/yl4579/PL-BER
 
 ## Trianing
 Please run each cell in the notebook [train.ipynb](https://github.com/yl4579/PL-BERT/blob/main/train.ipynb). You will need to change the line
-`config_path = "Configs/config.yml"` in cell 2 if you wish to use a different config file. The training code is in Jupyter notebook primarily because the initial epxeriment was conducted in Jupyter notebook, but you can easily make it a Python script if you want to. 
+`config_path = "configs/config.yml"` in cell 2 if you wish to use a different config file. The training code is in Jupyter notebook primarily because the initial epxeriment was conducted in Jupyter notebook, but you can easily make it a Python script if you want to. 
 
 ## Finetuning
 Here is an example of how to use it for StyleTTS finetuning. You can use it for other TTS models by replacing the text encoder with the pre-trained PL-BERT.

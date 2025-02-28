@@ -19,7 +19,7 @@ from dataloader import build_dataloader
 from model import MultiTaskModel
 from char_indexer import symbols
 
-config_path = "external/pl_bert/Configs/config.yml" # you can change it to anything else
+config_path = "external/pl_bert/configs/config.yml" # you can change it to anything else
 config = yaml.safe_load(open(config_path))
 training_params = config['training_params']
 
