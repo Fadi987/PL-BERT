@@ -16,7 +16,8 @@ import numpy as np
 from accelerate import Accelerator, DistributedDataParallelKwargs
 
 # Transformers imports
-from transformers import AdamW, AlbertConfig, AlbertModel, AutoTokenizer
+from transformers import AlbertConfig, AlbertModel, AutoTokenizer
+from torch.optim import AdamW
 
 # Local imports
 from dataloader import build_dataloader
