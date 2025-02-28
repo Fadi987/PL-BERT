@@ -27,6 +27,7 @@ def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Train phoneme-level BERT model")
     parser.add_argument("--config_path", type=str, default="external/pl_bert/configs/config.yml", help="Path to config file")
+    parser.add_argument("--run_name", type=str, default="default", help="Name of the run for organizing checkpoints")
     return parser.parse_args()
 
 args = parse_args()
@@ -188,7 +189,9 @@ def train():
     )
     dataset = load_from_disk(dataset_path)
 
-    log_dir = training_params['output_dir']
+    # Create log directory with run name to avoid overriding files
+    base_log_dir = training_params['output_dir']
+    log_dir = os.path.join(base_log_dir, args.run_name)
     if not os.path.exists(log_dir): os.makedirs(log_dir, exist_ok=True)
     shutil.copy(config_path, os.path.join(log_dir, os.path.basename(config_path)))
     
