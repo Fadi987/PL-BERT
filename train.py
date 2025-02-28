@@ -403,7 +403,7 @@ def save_checkpoint(model, optimizer, current_step, log_dir, accelerator, curren
         'optimizer': optimizer.state_dict(),
     }
     
-    checkpoint_path = os.path.join(log_dir, f"step_{current_step + 1}.pth")
+    checkpoint_path = os.path.join(log_dir, f"step_{current_step}.pth")
     accelerator.save(state, checkpoint_path)
     accelerator.print(f'Checkpoint saved at: {checkpoint_path}')
 
