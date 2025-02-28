@@ -163,6 +163,7 @@ def train():
     num_steps = training_params['num_steps']
     log_interval = training_params['log_interval']
     save_interval = training_params['save_interval']
+    max_epochs = 9
     
     # Initialize components
     tokenizer, criterion, accelerator = initialize_components(config, training_params, log_dir, args.resume)
@@ -183,11 +184,13 @@ def train():
 
     # Start training loop
     accelerator.print('Start training...')
-    current_step = train_loop(
+    current_step, current_epoch = train_loop(
         bert, optimizer, train_dataloader, criterion, accelerator,
         current_step, num_steps, save_interval, log_interval,
-        token_losses, phoneme_losses, total_losses, log_dir
+        token_losses, phoneme_losses, total_losses, log_dir, max_epochs
     )
+    
+    accelerator.print(f'Training completed at step {current_step}, epoch {current_epoch}')
 
 def setup_config_and_directories(args, config_path):
     """Setup configuration and directories based on resume flag."""
@@ -311,35 +314,41 @@ def initialize_model(config, tokenizer, log_dir, resume, accelerator):
 
 def train_loop(model, optimizer, dataloader, criterion, accelerator, 
                current_step, num_steps, save_interval, log_interval,
-               token_losses, phoneme_losses, total_losses, log_dir):
+               token_losses, phoneme_losses, total_losses, log_dir, max_epochs):
     """Main training loop."""
-    for _, batch in enumerate(dataloader):
-        # Process batch and compute loss
-        loss_token, loss_phoneme, loss = process_batch(model, batch, criterion, accelerator)
-        
-        # Optimization step
-        optimizer.zero_grad()
-        accelerator.backward(loss)
-        optimizer.step()
-        
-        current_step += 1
-        
-        # Update metrics and log
-        update_metrics_and_log(
-            accelerator, loss_token, loss_phoneme, loss,
-            token_losses, phoneme_losses, total_losses,
-            log_interval
-        )
-        
-        # Save checkpoint if needed
-        if (current_step) % save_interval == 0:
-            save_checkpoint(model, optimizer, current_step, log_dir, accelerator)
-        
-        # Check if training should end
-        if current_step > num_steps:
-            return current_step
+    current_epoch = 0
     
-    return current_step
+    while current_epoch < max_epochs:
+        current_epoch += 1
+        accelerator.print(f'Starting epoch {current_epoch}')
+        
+        for _, batch in enumerate(dataloader):
+            # Process batch and compute loss
+            loss_token, loss_phoneme, loss = process_batch(model, batch, criterion, accelerator)
+            
+            # Optimization step
+            optimizer.zero_grad()
+            accelerator.backward(loss)
+            optimizer.step()
+            
+            current_step += 1
+            
+            # Update metrics and log
+            update_metrics_and_log(
+                accelerator, loss_token, loss_phoneme, loss,
+                token_losses, phoneme_losses, total_losses,
+                log_interval, current_epoch
+            )
+            
+            # Save checkpoint if needed
+            if (current_step) % save_interval == 0:
+                save_checkpoint(model, optimizer, current_step, log_dir, accelerator, current_epoch)
+            
+            # Check if training should end based on steps
+            if current_step >= num_steps:
+                return current_step, current_epoch
+    
+    return current_step, current_epoch
 
 def process_batch(model, batch, criterion, accelerator):
     """Process a batch of data and compute losses."""
@@ -357,7 +366,7 @@ def process_batch(model, batch, criterion, accelerator):
 
 def update_metrics_and_log(accelerator, loss_token, loss_phoneme, loss,
                           token_losses, phoneme_losses, total_losses,
-                          log_interval):
+                          log_interval, current_epoch):
     """Update metrics tracking and log to wandb."""
     # Update rolling window queues
     token_losses.append(loss_token.item())
@@ -370,6 +379,7 @@ def update_metrics_and_log(accelerator, loss_token, loss_phoneme, loss,
             "token_loss": loss_token.item(),
             "phoneme_loss": loss_phoneme.item(),
             "total_loss": loss.item(),
+            "epoch": current_epoch
         }
         
         # Add rolling window metrics if we have enough data
@@ -382,13 +392,14 @@ def update_metrics_and_log(accelerator, loss_token, loss_phoneme, loss,
             
         wandb.log(log_dict)
 
-def save_checkpoint(model, optimizer, current_step, log_dir, accelerator):
+def save_checkpoint(model, optimizer, current_step, log_dir, accelerator, current_epoch):
     """Save model checkpoint."""
     accelerator.print('Saving..')
     
     state = {
         'net': model.state_dict(),
         'step': current_step,
+        'epoch': current_epoch,
         'optimizer': optimizer.state_dict(),
     }
     
