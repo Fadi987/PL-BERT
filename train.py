@@ -155,9 +155,44 @@ def train():
     args = parse_args()
     config_path = args.config_path
     
-    # Create log directory with run name to avoid overriding files
-    base_log_dir = None  # Will be set from config
-    log_dir = None  # Will be set after loading config
+    # Setup configuration and directories
+    config, log_dir = setup_config_and_directories(args, config_path)
+    
+    # Extract training parameters
+    training_params = config['training_params']
+    num_steps = training_params['num_steps']
+    log_interval = training_params['log_interval']
+    save_interval = training_params['save_interval']
+    
+    # Initialize components
+    tokenizer, criterion, accelerator = initialize_components(config, training_params, log_dir, args.resume)
+    
+    # Initialize wandb and metrics tracking
+    token_losses, phoneme_losses, total_losses = initialize_metrics_tracking(accelerator, config, log_interval)
+    
+    # Setup dataset and dataloader
+    train_dataloader = setup_dataset_and_dataloader(config, accelerator)
+    
+    # Initialize model
+    bert, optimizer, current_step = initialize_model(config, tokenizer, log_dir, args.resume, accelerator)
+    
+    # Prepare for distributed training
+    bert, optimizer, train_dataloader = accelerator.prepare(
+        bert, optimizer, train_dataloader
+    )
+
+    # Start training loop
+    accelerator.print('Start training...')
+    current_step = train_loop(
+        bert, optimizer, train_dataloader, criterion, accelerator,
+        current_step, num_steps, save_interval, log_interval,
+        token_losses, phoneme_losses, total_losses, log_dir
+    )
+
+def setup_config_and_directories(args, config_path):
+    """Setup configuration and directories based on resume flag."""
+    base_log_dir = None
+    log_dir = None
     
     # Load the appropriate config based on resume flag
     if args.resume:
@@ -178,28 +213,12 @@ def train():
         # For new runs, use the provided config
         config = yaml.safe_load(open(config_path))
     
-    # Extract all necessary parameters from config
-    training_params = config['training_params']
-    num_steps = training_params['num_steps']
-    log_interval = training_params['log_interval']
-    save_interval = training_params['save_interval']
-    base_log_dir = training_params['output_dir']
+    # Set up log directory
+    base_log_dir = config['training_params']['output_dir']
     log_dir = os.path.join(base_log_dir, args.run_name)
     
-    # Initialize tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(config['preprocess_params']['tokenizer'])
-    
-    # Initialize loss function
-    criterion = nn.CrossEntropyLoss()
-    
-    # Initialize accelerator
-    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
-    accelerator = Accelerator(mixed_precision=training_params['mixed_precision'], split_batches=True, kwargs_handlers=[ddp_kwargs])
-    
     # Handle directory setup
-    if args.resume:
-        accelerator.print(f"Resuming training from '{log_dir}' with existing config.")
-    else:
+    if not args.resume:
         # Start from scratch - remove existing directory if it exists
         if os.path.exists(log_dir):
             shutil.rmtree(log_dir)
@@ -208,8 +227,33 @@ def train():
         os.makedirs(log_dir, exist_ok=True)
         # Copy the config file to the run directory
         shutil.copy(config_path, os.path.join(log_dir, os.path.basename(config_path)))
+    
+    return config, log_dir
+
+def initialize_components(config, training_params, log_dir, resume):
+    """Initialize tokenizer, loss function, and accelerator."""
+    # Initialize tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(config['preprocess_params']['tokenizer'])
+    
+    # Initialize loss function
+    criterion = nn.CrossEntropyLoss()
+    
+    # Initialize accelerator
+    ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
+    accelerator = Accelerator(mixed_precision=training_params['mixed_precision'], 
+                             split_batches=True, 
+                             kwargs_handlers=[ddp_kwargs])
+    
+    # Log status message
+    if resume:
+        accelerator.print(f"Resuming training from '{log_dir}' with existing config.")
+    else:
         accelerator.print(f"Starting new training run in '{log_dir}'.")
     
+    return tokenizer, criterion, accelerator
+
+def initialize_metrics_tracking(accelerator, config, log_interval):
+    """Initialize wandb and metrics tracking queues."""
     # Initialize wandb
     if accelerator.is_main_process:
         wandb.init(project="pl-bert", config=config)
@@ -219,6 +263,10 @@ def train():
     phoneme_losses = deque(maxlen=log_interval)
     total_losses = deque(maxlen=log_interval)
     
+    return token_losses, phoneme_losses, total_losses
+
+def setup_dataset_and_dataloader(config, accelerator):
+    """Load dataset and create dataloader."""
     # Load the processed dataset from the output directory specified in config
     dataset_path = os.path.join(
         config['preprocess_params']['preprocess_dir'],
@@ -226,87 +274,127 @@ def train():
     )
     dataset = load_from_disk(dataset_path)
     
-    batch_size = training_params['batch_size']
+    batch_size = config['training_params']['batch_size']
     train_dataloader = build_dataloader(
-        dataset, validation=False, batch_size=batch_size, num_workers=0, device=accelerator.device, dataset_config=config['dataset_params'])
+        dataset, 
+        validation=False, 
+        batch_size=batch_size, 
+        num_workers=0, 
+        device=accelerator.device, 
+        dataset_config=config['dataset_params']
+    )
+    
+    return train_dataloader
 
+def initialize_model(config, tokenizer, log_dir, resume, accelerator):
+    """Initialize model, optimizer, and load checkpoint if resuming."""
     albert_base_configuration = AlbertConfig(**config['model_params'])
     
     bert = AlbertModel(albert_base_configuration)
     bert = MultiTaskModel(
-        bert, num_phonemes=len(symbols), num_tokens=tokenizer.vocab_size, hidden_size=config['model_params']['hidden_size'])
+        bert, 
+        num_phonemes=len(symbols), 
+        num_tokens=tokenizer.vocab_size, 
+        hidden_size=config['model_params']['hidden_size']
+    )
     
     is_checkpoint_found, current_step = find_latest_checkpoint(log_dir)
     
-    optimizer = AdamW(bert.parameters(), lr=float(training_params['learning_rate']))
+    optimizer = AdamW(bert.parameters(), lr=float(config['training_params']['learning_rate']))
     
-    if is_checkpoint_found and args.resume:
+    if is_checkpoint_found and resume:
         bert, optimizer = load_checkpoint(bert, optimizer, log_dir, current_step, accelerator)
     else:
         current_step = 0
     
-    bert, optimizer, train_dataloader = accelerator.prepare(
-        bert, optimizer, train_dataloader
-    )
+    return bert, optimizer, current_step
 
-    accelerator.print('Start training...')
-    for _, batch in enumerate(train_dataloader):        
-        current_step += 1
+def train_loop(model, optimizer, dataloader, criterion, accelerator, 
+               current_step, num_steps, save_interval, log_interval,
+               token_losses, phoneme_losses, total_losses, log_dir):
+    """Main training loop."""
+    for _, batch in enumerate(dataloader):
+        # Process batch and compute loss
+        loss_token, loss_phoneme, loss = process_batch(model, batch, criterion, accelerator)
         
-        token_ids, phoneme_labels, masked_phonemes, input_lengths, masked_indices = batch
-        text_mask = length_to_mask(torch.Tensor(input_lengths)).to(accelerator.device)
-
-        phoneme_pred, token_pred = bert(masked_phonemes, attention_mask=(~text_mask).int())
-        
-        loss_token = calculate_token_loss(token_pred, token_ids, input_lengths, criterion)
-        loss_phoneme = calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_indices, criterion)
-
-        loss = loss_token + loss_phoneme
-
+        # Optimization step
         optimizer.zero_grad()
         accelerator.backward(loss)
         optimizer.step()
-
+        
         current_step += 1
         
-        # Update rolling window queues
-        token_losses.append(loss_token.item())
-        phoneme_losses.append(loss_phoneme.item())
-        total_losses.append(loss.item())
+        # Update metrics and log
+        update_metrics_and_log(
+            accelerator, loss_token, loss_phoneme, loss,
+            token_losses, phoneme_losses, total_losses,
+            log_interval
+        )
         
-        # Log metrics to wandb
-        if accelerator.is_main_process:
-            log_dict = {
-                "token_loss": loss_token.item(),
-                "phoneme_loss": loss_phoneme.item(),
-                "total_loss": loss.item(),
-            }
-            
-            # Add rolling window metrics if we have enough data
-            if len(total_losses) == log_interval:
-                log_dict.update({
-                    "token_loss_avg": np.mean(token_losses),
-                    "phoneme_loss_avg": np.mean(phoneme_losses),
-                    "total_loss_avg": np.mean(total_losses)
-                })
-                
-            wandb.log(log_dict)
-            
-        if (current_step)%save_interval == 0:
-            accelerator.print('Saving..')
-
-            state = {
-                'net':  bert.state_dict(),
-                'step': current_step,
-                'optimizer': optimizer.state_dict(),
-            }
-
-            checkpoint_path = os.path.join(log_dir, f"step_{current_step + 1}.pth")
-            accelerator.save(state, checkpoint_path)
-            accelerator.print(f'Checkpoint saved at: {checkpoint_path}')
-
+        # Save checkpoint if needed
+        if (current_step) % save_interval == 0:
+            save_checkpoint(model, optimizer, current_step, log_dir, accelerator)
+        
+        # Check if training should end
         if current_step > num_steps:
-            return
+            return current_step
+    
+    return current_step
+
+def process_batch(model, batch, criterion, accelerator):
+    """Process a batch of data and compute losses."""
+    token_ids, phoneme_labels, masked_phonemes, input_lengths, masked_indices = batch
+    text_mask = length_to_mask(torch.Tensor(input_lengths)).to(accelerator.device)
+    
+    phoneme_pred, token_pred = model(masked_phonemes, attention_mask=(~text_mask).int())
+    
+    loss_phoneme = calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_indices, criterion)
+    loss_token = calculate_token_loss(token_pred, token_ids, input_lengths, criterion)
+    
+    loss = loss_token + loss_phoneme
+    
+    return loss_token, loss_phoneme, loss
+
+def update_metrics_and_log(accelerator, loss_token, loss_phoneme, loss,
+                          token_losses, phoneme_losses, total_losses,
+                          log_interval):
+    """Update metrics tracking and log to wandb."""
+    # Update rolling window queues
+    token_losses.append(loss_token.item())
+    phoneme_losses.append(loss_phoneme.item())
+    total_losses.append(loss.item())
+    
+    # Log metrics to wandb
+    if accelerator.is_main_process:
+        log_dict = {
+            "token_loss": loss_token.item(),
+            "phoneme_loss": loss_phoneme.item(),
+            "total_loss": loss.item(),
+        }
+        
+        # Add rolling window metrics if we have enough data
+        if len(total_losses) == log_interval:
+            log_dict.update({
+                "token_loss_avg": np.mean(token_losses),
+                "phoneme_loss_avg": np.mean(phoneme_losses),
+                "total_loss_avg": np.mean(total_losses)
+            })
+            
+        wandb.log(log_dict)
+
+def save_checkpoint(model, optimizer, current_step, log_dir, accelerator):
+    """Save model checkpoint."""
+    accelerator.print('Saving..')
+    
+    state = {
+        'net': model.state_dict(),
+        'step': current_step,
+        'optimizer': optimizer.state_dict(),
+    }
+    
+    checkpoint_path = os.path.join(log_dir, f"step_{current_step + 1}.pth")
+    accelerator.save(state, checkpoint_path)
+    accelerator.print(f'Checkpoint saved at: {checkpoint_path}')
 
 if __name__ == "__main__":
     train()
