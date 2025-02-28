@@ -3,11 +3,14 @@ import os
 import shutil
 import yaml
 import argparse
+from collections import deque
 
 # Third-party imports
 import torch
 from torch import nn
 from datasets import load_from_disk
+import wandb
+import numpy as np
 
 # Accelerate imports
 from accelerate import Accelerator, DistributedDataParallelKwargs
@@ -167,7 +170,16 @@ def train():
     ddp_kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
     accelerator = Accelerator(mixed_precision=training_params['mixed_precision'], split_batches=True, kwargs_handlers=[ddp_kwargs])
     
+    # Initialize wandb
+    if accelerator.is_main_process:
+        wandb.init(project="pl-bert", config=config)
+    
     curr_steps = 0
+    
+    # Initialize rolling window queues for losses
+    token_losses = deque(maxlen=log_interval)
+    phoneme_losses = deque(maxlen=log_interval)
+    total_losses = deque(maxlen=log_interval)
     
     # Load the processed dataset from the output directory specified in config
     dataset_path = os.path.join(
@@ -203,7 +215,6 @@ def train():
 
     accelerator.print('Start training...')
 
-    running_loss = 0
     for _, batch in enumerate(train_dataloader):        
         curr_steps += 1
         
@@ -221,13 +232,30 @@ def train():
         accelerator.backward(loss)
         optimizer.step()
 
-        running_loss += loss.item()
-
         current_step += 1
-        if (current_step)%log_interval == 0:
-            accelerator.print ('Step [%d/%d], Loss: %.5f, Token Loss: %.5f, Phoneme Loss: %.5f'
-                    %(current_step, num_steps, running_loss / log_interval, loss_token, loss_phoneme))
-            running_loss = 0
+        
+        # Update rolling window queues
+        token_losses.append(loss_token.item())
+        phoneme_losses.append(loss_phoneme.item())
+        total_losses.append(loss.item())
+        
+        # Log metrics to wandb
+        if accelerator.is_main_process:
+            log_dict = {
+                "token_loss": loss_token.item(),
+                "phoneme_loss": loss_phoneme.item(),
+                "total_loss": loss.item(),
+            }
+            
+            # Add rolling window metrics if we have enough data
+            if len(total_losses) == log_interval:
+                log_dict.update({
+                    "token_loss_avg": np.mean(token_losses),
+                    "phoneme_loss_avg": np.mean(phoneme_losses),
+                    "total_loss_avg": np.mean(total_losses)
+                })
+                
+            wandb.log(log_dict)
             
         if (current_step)%save_interval == 0:
             accelerator.print('Saving..')
@@ -238,7 +266,9 @@ def train():
                 'optimizer': optimizer.state_dict(),
             }
 
-            accelerator.save(state, log_dir + '/step_' + str(current_step + 1) + '.pth')
+            checkpoint_path = os.path.join(log_dir, f"step_{current_step + 1}.pth")
+            accelerator.save(state, checkpoint_path)
+            accelerator.print(f'Checkpoint saved at: {checkpoint_path}')
 
         if curr_steps > num_steps:
             return
