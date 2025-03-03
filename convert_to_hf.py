@@ -4,6 +4,7 @@ import argparse
 from transformers import AlbertConfig, AlbertModel, AutoTokenizer
 from model import MultiTaskModel
 from char_indexer import symbols
+import yaml
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Convert PL-BERT checkpoint to Hugging Face format")
@@ -61,6 +62,44 @@ def main():
         yaml.dump(config, f)
     
     print(f"Model successfully converted and saved to {args.output_dir}")
+
+def load_pl_bert_model(model_dir):
+    """
+    Load a PL-BERT model that was converted using convert_to_hf.py
+    
+    Args:
+        model_dir: Directory where the converted model was saved
+    
+    Returns:
+        model: The loaded MultiTaskModel
+        tokenizer: The associated tokenizer
+    """
+    # Load the config
+    with open(f"{model_dir}/config.yml", "r") as f:
+        config = yaml.safe_load(f)
+    
+    # Load the tokenizer
+    tokenizer = AutoTokenizer.from_pretrained(config['preprocess_params']['tokenizer'])
+    
+    # Load the encoder (ALBERT) part
+    encoder = AlbertModel.from_pretrained(model_dir)
+    
+    # Initialize the full model
+    model = MultiTaskModel(
+        encoder,
+        num_phonemes=len(symbols),
+        num_tokens=tokenizer.vocab_size,
+        hidden_size=config['model_params']['hidden_size']
+    )
+    
+    # Load the full model state dict (including task-specific heads)
+    full_model_path = f"{model_dir}/pl_bert_full_model.pt"
+    model.load_state_dict(torch.load(full_model_path, map_location='cpu'))
+    
+    # Set to evaluation mode
+    model.eval()
+    
+    return model, tokenizer
 
 if __name__ == "__main__":
     main()
