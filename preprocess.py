@@ -10,7 +10,7 @@ from transformers import AutoTokenizer
 import yaml
 
 from char_indexer import PUNCTUATION
-from text_normalize import convert_numbers_to_arabic_words, filter_non_arabic_words, remove_accents, separate_words_and_punctuation
+from text_normalize import convert_numbers_to_arabic_words, filter_non_arabic_words, remove_accents, separate_words_and_punctuation, clean_text
 
 def phonemize(text, global_phonemizer, tokenizer=None, use_tokenizer=True):
     """Convert text to phonemes and token IDs.
@@ -28,7 +28,7 @@ def phonemize(text, global_phonemizer, tokenizer=None, use_tokenizer=True):
     text = convert_numbers_to_arabic_words(text)
     text = filter_non_arabic_words(text)
     text = remove_accents(text)
-    # text = _clean_text(text) # TODO: add in a future PR after testing
+    # text = clean_text(text) # TODO: add in a future PR after testing
 
     # Tokenization step - either using tokenizer or simple word separation
     if use_tokenizer:
