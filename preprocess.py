@@ -2,77 +2,15 @@ import os
 import argparse
 import time
 import shutil
-import re
 from typing import List, Tuple, Set, Any
 from datasets import load_dataset, load_from_disk, concatenate_datasets, Dataset
 from pebble import ProcessPool
 import phonemizer
 from transformers import AutoTokenizer
 import yaml
-from num2words import num2words
-from text_normalize import remove_accents
 
 from char_indexer import PUNCTUATION
-
-def convert_numbers_to_arabic_words(text):
-    """Convert English numerals in Arabic text to Arabic word form."""
-    # Find all numbers in the text with word boundaries
-    numbers = re.findall(r'\d+', text)
-    
-    # Sort numbers by length in descending order to avoid partial replacements
-    # (e.g., replacing "19" in "1986" before replacing "1986" itself)
-    numbers.sort(key=len, reverse=True)
-    
-    # Replace each number with its Arabic word form
-    for num in numbers:
-        try:
-            # Convert to integer
-            n = int(num)
-            # Use num2words with Arabic language
-            arabic_word = num2words(n, lang='ar')
-            # Replace the number with its word form using word boundaries
-            text = re.sub(re.escape(num), arabic_word, text)
-        except (ValueError, NotImplementedError):
-            # Skip if conversion fails
-            continue
-    
-    return text
-
-def filter_non_arabic_words(text):
-    """Remove non-Arabic words from text."""
-    # Arabic Unicode range (includes Arabic, Persian, Urdu characters)
-    arabic_pattern = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u0660-\u0669]+')
-    
-    # Split text into words
-    words = text.split()
-    
-    # Keep only words that contain Arabic characters
-    arabic_words = []
-    for word in words:
-        # Check if the word ONLY contains Arabic characters
-        if arabic_pattern.search(word):
-            arabic_words.append(word)
-    
-    # Join the Arabic words back into text
-    return ' '.join(arabic_words)
-
-def separate_words_and_punctuation(text):
-    """
-    Separate text into a list of words and punctuation using regex for better performance.
-    Punctuation marks are treated as separate tokens.
-    """
-    # Create a regex pattern that matches either a punctuation character or a non-space, non-punctuation sequence
-    # We escape each punctuation character and join them into a character class
-    punct_pattern = '|'.join(re.escape(p) for p in PUNCTUATION)
-    pattern = f'({punct_pattern})|([^\s{re.escape("".join(PUNCTUATION))}]+)'
-    
-    # Find all matches
-    tokens = re.findall(pattern, text)
-    
-    # Flatten the list of tuples and remove empty strings
-    result = [t[0] if t[0] else t[1] for t in tokens]
-    
-    return result
+from text_normalize import convert_numbers_to_arabic_words, filter_non_arabic_words, remove_accents, separate_words_and_punctuation
 
 def phonemize(text, global_phonemizer, tokenizer=None, use_tokenizer=True):
     """Convert text to phonemes and token IDs.
@@ -90,7 +28,8 @@ def phonemize(text, global_phonemizer, tokenizer=None, use_tokenizer=True):
     text = convert_numbers_to_arabic_words(text)
     text = filter_non_arabic_words(text)
     text = remove_accents(text)
-    
+    # text = _clean_text(text) # TODO: add in a future PR after testing
+
     # Tokenization step - either using tokenizer or simple word separation
     if use_tokenizer:
         if tokenizer is None:
