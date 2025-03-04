@@ -2,78 +2,61 @@ import os
 import argparse
 import time
 import shutil
-import re
 from typing import List, Tuple, Set, Any
 from datasets import load_dataset, load_from_disk, concatenate_datasets, Dataset
 from pebble import ProcessPool
 import phonemizer
 from transformers import AutoTokenizer
 import yaml
-from num2words import num2words
-from text_normalize import remove_accents
 
 from char_indexer import PUNCTUATION
+from text_normalize import convert_numbers_to_arabic_words, filter_non_arabic_words, remove_accents, separate_words_and_punctuation, clean_text
 
-def convert_numbers_to_arabic_words(text):
-    """Convert English numerals in Arabic text to Arabic word form."""
-    # Find all numbers in the text with word boundaries
-    numbers = re.findall(r'\d+', text)
+def phonemize(text, global_phonemizer, tokenizer=None, use_tokenizer=True):
+    """Convert text to phonemes and token IDs.
     
-    # Sort numbers by length in descending order to avoid partial replacements
-    # (e.g., replacing "19" in "1986" before replacing "1986" itself)
-    numbers.sort(key=len, reverse=True)
-    
-    # Replace each number with its Arabic word form
-    for num in numbers:
-        try:
-            # Convert to integer
-            n = int(num)
-            # Use num2words with Arabic language
-            arabic_word = num2words(n, lang='ar')
-            # Replace the number with its word form using word boundaries
-            text = re.sub(re.escape(num), arabic_word, text)
-        except (ValueError, NotImplementedError):
-            # Skip if conversion fails
-            continue
-    
-    return text
-
-def filter_non_arabic_words(text):
-    """Remove non-Arabic words from text."""
-    # Arabic Unicode range (includes Arabic, Persian, Urdu characters)
-    arabic_pattern = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u0660-\u0669]+')
-    
-    # Split text into words
-    words = text.split()
-    
-    # Keep only words that contain Arabic characters
-    arabic_words = []
-    for word in words:
-        # Check if the word ONLY contains Arabic characters
-        if arabic_pattern.search(word):
-            arabic_words.append(word)
-    
-    # Join the Arabic words back into text
-    return ' '.join(arabic_words)
-
-def phonemize(text, global_phonemizer, tokenizer):
-    """Convert text to phonemes and token IDs."""
+    Args:
+        text: Input text to phonemize
+        global_phonemizer: Phonemizer instance
+        tokenizer: Tokenizer instance (optional if use_tokenizer=False)
+        use_tokenizer: Whether to use tokenizer or simple word separation
+        
+    Returns:
+        Dictionary containing phonemes and optionally token_ids
+    """
+    # Common preprocessing steps
     text = convert_numbers_to_arabic_words(text)
     text = filter_non_arabic_words(text)
-
     text = remove_accents(text)
-    # TODO: English PL-BERT uses normalize_text, but Arabic PL-BERT does not and may need to use in the future. However, the code is highly manual and the Arabic version implementation TBD.
-    tokens = tokenizer.tokenize(text)
+    # text = clean_text(text) # TODO: add in a future PR after testing
 
-    token_ids = [tokenizer.convert_tokens_to_ids(token) for token in tokens]
-    phonemes = [global_phonemizer.phonemize([token.replace("#", "")], strip=True)[0] if token not in PUNCTUATION else token for token in tokens]
+    # Tokenization step - either using tokenizer or simple word separation
+    if use_tokenizer:
+        if tokenizer is None:
+            raise ValueError("Tokenizer must be provided when use_tokenizer=True")
+        tokens = tokenizer.tokenize(text)
+        token_ids = [tokenizer.convert_tokens_to_ids(token) for token in tokens]
+        # Process phonemes with tokenizer-specific handling
+        phonemes = [global_phonemizer.phonemize([token.replace("#", "")], strip=True)[0] 
+                   if token not in PUNCTUATION else token for token in tokens]
+    else:
+        tokens = separate_words_and_punctuation(text)
+        token_ids = None
+        # Process phonemes without tokenizer-specific handling
+        phonemes = [global_phonemizer.phonemize([token], strip=True)[0] 
+                   if token not in PUNCTUATION else token for token in tokens]
+    
+    # Return appropriate result based on tokenization method
+    result = {'phonemes': phonemes}
+    if use_tokenizer:
+        result['token_ids'] = token_ids
         
-    return {'token_ids' : token_ids, 'phonemes': phonemes}
+    return result
 
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Preprocess text data for phoneme-level BERT training")
-    parser.add_argument("--config_path", type=str, default="external/pl_bert/Configs/config.yml", help="Path to config file")
+    parser.add_argument("--config_path", type=str, default="external/pl_bert/configs/config.yml", help="Path to config file")
     parser.add_argument("--local_dataset_path", type=str, default=None, help="Path to local dataset (if using local data)")
     parser.add_argument("--use_local_dataset", action="store_true", help="Use local dataset instead of downloading from HuggingFace")
     return parser.parse_args()

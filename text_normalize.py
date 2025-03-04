@@ -1,11 +1,14 @@
+import numpy as np
 import pandas as pd
 
 from nltk.tokenize import TweetTokenizer
 from nltk.tokenize.treebank import TreebankWordDetokenizer
+from num2words import num2words
 import unicodedata
 
-import os, sys
 import re
+
+from char_indexer import PUNCTUATION
 
 from converters.Plain      import Plain
 from converters.Punct      import Punct
@@ -71,21 +74,105 @@ labels = {
     "RANGE": Range()
 }
 
+def is_whitespace(char):
+    """Checks whether `chars` is a whitespace character."""
+    # \t, \n, and \r are technically contorl characters but we treat them
+    # as whitespace since they are generally considered as such.
+    if char == " " or char == "\t" or char == "\n" or char == "\r":
+        return True
+    cat = unicodedata.category(char)
+    if cat == "Zs":
+        return True
+    return False
+
+def is_control(char):
+    """Checks whether `chars` is a control character."""
+    # These are technically control characters but we count them as whitespace
+    # characters.
+    if char == "\t" or char == "\n" or char == "\r":
+        return False
+    cat = unicodedata.category(char)
+    if cat in ("Cc", "Cf"):
+        return True
+    return False
+
+def clean_text(text):
+    """Performs invalid character removal and whitespace cleanup on text."""
+    output = []
+    for char in text:
+        cp = ord(char)
+        if cp == 0 or cp == 0xfffd or is_control(char):
+            continue
+        if is_whitespace(char):
+            output.append(" ")
+        else:
+            output.append(char)
+    return "".join(output)
+
+def convert_numbers_to_arabic_words(text):
+    """Convert English numerals in Arabic text to Arabic word form."""
+    # Find all numbers in the text with word boundaries
+    numbers = re.findall(r'\d+', text)
+    
+    # Sort numbers by length in descending order to avoid partial replacements
+    # (e.g., replacing "19" in "1986" before replacing "1986" itself)
+    numbers.sort(key=len, reverse=True)
+    
+    # Replace each number with its Arabic word form
+    for num in numbers:
+        try:
+            # Convert to integer
+            n = int(num)
+            # Use num2words with Arabic language
+            arabic_word = num2words(n, lang='ar')
+            # Replace the number with its word form using word boundaries
+            text = re.sub(re.escape(num), arabic_word, text)
+        except (ValueError, NotImplementedError):
+            # Skip if conversion fails
+            continue
+    
+    return text
+
+def filter_non_arabic_words(text):
+    """Remove non-Arabic words from text."""
+    # Arabic Unicode range (includes Arabic, Persian, Urdu characters)
+    arabic_pattern = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u0660-\u0669]+')
+    
+    # Split text into words
+    words = text.split()
+    
+    # Keep only words that contain Arabic characters
+    arabic_words = []
+    for word in words:
+        # Check if the word ONLY contains Arabic characters
+        if arabic_pattern.search(word):
+            arabic_words.append(word)
+    
+    # Join the Arabic words back into text
+    return ' '.join(arabic_words)
+
+def separate_words_and_punctuation(text):
+    """
+    Separate text into a list of words and punctuation using regex for better performance.
+    Punctuation marks are treated as separate tokens.
+    """
+    # Create a regex pattern that matches either a punctuation character or a non-space, non-punctuation sequence
+    # We escape each punctuation character and join them into a character class
+    punct_pattern = '|'.join(re.escape(p) for p in PUNCTUATION)
+    pattern = f'({punct_pattern})|([^\s{re.escape("".join(PUNCTUATION))}]+)'
+    
+    # Find all matches
+    tokens = re.findall(pattern, text)
+    
+    # Flatten the list of tuples and remove empty strings
+    result = [t[0] if t[0] else t[1] for t in tokens]
+    
+    return result
+
 def split_given_size(a, size):
     return np.split(a, np.arange(size,len(a),size))
 
 word_tokenize = TweetTokenizer().tokenize
-
-def normalize_split(text):
-    words = word_tokenize(text)
-    chunks = split_given_size(words, 500)
-    
-    normalized_text = ""
-    for words in chunks:
-        sentence = TreebankWordDetokenizer().detokenize(words)
-        normalized_text += normalizer.normalize(sentence) + " "
-    
-    return normalized_text.replace(" ' s", "'s")
 
 def remove_accents(input_str):
     nfkd_form = unicodedata.normalize('NFKD', input_str)
