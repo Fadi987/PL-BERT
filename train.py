@@ -291,7 +291,7 @@ def setup_dataset_and_dataloader(config, accelerator):
 
 def initialize_model(config, tokenizer, log_dir, resume, accelerator):
     """Initialize model, optimizer, and load checkpoint if resuming."""
-    albert_base_configuration = AlbertConfig(**config['model_params'])
+    albert_base_configuration = AlbertConfig(vocab_size=len(symbols), **config['model_params'])
     
     bert = AlbertModel(albert_base_configuration)
     bert = MultiTaskModel(
