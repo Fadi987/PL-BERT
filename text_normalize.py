@@ -136,16 +136,16 @@ def convert_numbers_to_arabic_words(text):
 def filter_non_arabic_words(text):
     """Remove non-Arabic words from text."""
     # Arabic Unicode range (includes Arabic, Persian, Urdu characters)
-    arabic_pattern = re.compile(r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u0660-\u0669]+')
+    arabic_pattern = re.compile(r'^[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\u0660-\u0669]+$')
     
     # Split text into words
     words = text.split()
     
-    # Keep only words that contain Arabic characters
+    # Keep only words that contain ONLY Arabic characters
     arabic_words = []
     for word in words:
         # Check if the word ONLY contains Arabic characters
-        if arabic_pattern.search(word):
+        if arabic_pattern.fullmatch(word):
             arabic_words.append(word)
     
     # Join the Arabic words back into text
