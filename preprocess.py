@@ -362,6 +362,5 @@ def create_expanded_dataset(dataset_path, max_seq_length=512, num_epochs=10):
     return hf_dataset, output_path
 
 if __name__ == "__main__":
-    # output_path = main_clean()
-    output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.cleaned'
+    output_path = main_clean()
     create_expanded_dataset(output_path, num_epochs=2)

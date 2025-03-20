@@ -150,10 +150,10 @@ class TruncatedTextDataset(torch.utils.data.Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
-        cleaned_text = self.data[idx]['cleaned_text']
+        text = self.data[idx]['text']
         
         # Handle sequence length and truncation if needed
-        truncated_text = self._truncate_text_if_needed(cleaned_text)
+        truncated_text = self._truncate_text_if_needed(text)
         
         return truncated_text
     
