@@ -11,8 +11,77 @@ import yaml
 
 from char_indexer import PUNCTUATION
 from text_normalize import convert_numbers_to_arabic_words, filter_non_arabic_words, remove_accents, separate_words_and_punctuation, clean_text
+from util_models import CattTashkeel
 
-def phonemize(text, global_phonemizer, tokenizer=None, use_tokenizer=True):
+def phonemize_with_diacritization(text, global_phonemizer, diacritizer=None):
+    """Convert text to phonemes using diacritization and word segmentation.
+    
+    Args:
+        text: Input text to phonemize
+        global_phonemizer: Phonemizer instance
+        diacritizer: Optional diacritizer for Arabic text
+        
+    Returns:
+        List of phonemes
+    """
+    # Extract punctuation and text segments
+    tokens = separate_words_and_punctuation(text)
+    
+    # Group non-punctuation tokens into segments
+    segments = []
+    current_segment = []
+    punctuations = []
+    segment_indices = []  # To track where punctuations should be inserted
+    
+    for i, token in enumerate(tokens):
+        if token in PUNCTUATION:
+            if current_segment:
+                segments.append(" ".join(current_segment))
+                segment_indices.append(i)
+                current_segment = []
+            punctuations.append(token)
+        else:
+            current_segment.append(token)
+    
+    # Add the last segment if it exists
+    if current_segment:
+        segments.append(" ".join(current_segment))
+        segment_indices.append(len(tokens))
+    
+    # Diacritize the segments if diacritizer is provided
+    if diacritizer is not None:
+        diacritized_segments = diacritizer.do_tashkeel_batch(segments, batch_size=16, verbose=False)
+    else:
+        diacritized_segments = segments
+    
+    # Phonemize each diacritized segment and split into words
+    phonemized_segments = []
+    for segment in diacritized_segments:
+        phonemized_segment = global_phonemizer.phonemize([segment], strip=True)[0]
+        # Split the phonemized segment into words
+        phonemized_words = phonemized_segment.split()
+        phonemized_segments.extend(phonemized_words)
+    
+    # Reconstruct the final phonemes list with punctuation in the correct positions
+    phonemes = []
+    seg_idx = 0
+    punct_idx = 0
+    
+    for i in range(len(tokens)):
+        if i in segment_indices:
+            # We've reached the end of a segment, add punctuation
+            if punct_idx < len(punctuations):
+                phonemes.append(punctuations[punct_idx])
+                punct_idx += 1
+        else:
+            # Add the next phonemized word from the current segment
+            if seg_idx < len(phonemized_segments):
+                phonemes.append(phonemized_segments[seg_idx])
+                seg_idx += 1
+                
+    return phonemes
+
+def phonemize(text, global_phonemizer, tokenizer=None, use_tokenizer=True, diacritizer=None):
     """Convert text to phonemes and token IDs.
     
     Args:
@@ -20,6 +89,7 @@ def phonemize(text, global_phonemizer, tokenizer=None, use_tokenizer=True):
         global_phonemizer: Phonemizer instance
         tokenizer: Tokenizer instance (optional if use_tokenizer=False)
         use_tokenizer: Whether to use tokenizer or simple word separation
+        diacritizer: Optional diacritizer for Arabic text
         
     Returns:
         Dictionary containing phonemes and optionally token_ids
@@ -28,24 +98,23 @@ def phonemize(text, global_phonemizer, tokenizer=None, use_tokenizer=True):
     text = convert_numbers_to_arabic_words(text)
     text = filter_non_arabic_words(text)
     text = remove_accents(text)
-    # text = clean_text(text) # TODO: add in a future PR after testing
+    text = clean_text(text)
 
     # Tokenization step - either using tokenizer or simple word separation
     if use_tokenizer:
-        if tokenizer is None:
-            raise ValueError("Tokenizer must be provided when use_tokenizer=True")
+        assert diacritizer is None, "Diacritizer must be None when use_tokenizer=True"
+        assert tokenizer is not None, "Tokenizer must be provided when use_tokenizer=True"
+
         tokens = tokenizer.tokenize(text)
         token_ids = [tokenizer.convert_tokens_to_ids(token) for token in tokens]
         # Process phonemes with tokenizer-specific handling
         phonemes = [global_phonemizer.phonemize([token.replace("#", "")], strip=True)[0] 
                    if token not in PUNCTUATION else token for token in tokens]
     else:
-        tokens = separate_words_and_punctuation(text)
+        # Use the dedicated function for phonemization with diacritization
+        phonemes = phonemize_with_diacritization(text, global_phonemizer, diacritizer)
         token_ids = None
-        # Process phonemes without tokenizer-specific handling
-        phonemes = [global_phonemizer.phonemize([token], strip=True)[0] 
-                   if token not in PUNCTUATION else token for token in tokens]
-    
+
     # Return appropriate result based on tokenization method
     result = {'phonemes': phonemes}
     if use_tokenizer:
@@ -59,11 +128,12 @@ def parse_args():
     parser.add_argument("--config_path", type=str, default="external/pl_bert/configs/config.yml", help="Path to config file")
     parser.add_argument("--local_dataset_path", type=str, default=None, help="Path to local dataset (if using local data)")
     parser.add_argument("--use_local_dataset", action="store_true", help="Use local dataset instead of downloading from HuggingFace")
+    parser.add_argument("--use_tokenizer", action="store_true", help="Use tokenizer for processing instead of diacritizer")
     return parser.parse_args()
 
-def process_shard(args: Tuple[int, str, Dataset, Any, Any, int]) -> Tuple[int, bool]:
+def process_shard(args: Tuple[int, str, Dataset, Any, Any, Any, int, bool]) -> Tuple[int, bool]:
     """Process a single dataset shard."""
-    i, root_directory, dataset, global_phonemizer, tokenizer, num_shards = args
+    i, root_directory, dataset, global_phonemizer, tokenizer, diacritizer, num_shards, use_tokenizer = args
     directory = os.path.join(root_directory, f"shard_{i}")
     
     if os.path.exists(directory):
@@ -74,7 +144,7 @@ def process_shard(args: Tuple[int, str, Dataset, Any, Any, int]) -> Tuple[int, b
         print(f'Processing shard {i} ...')
         shard = dataset.shard(num_shards=num_shards, index=i)
         processed_dataset = shard.map(
-            lambda t: phonemize(t['text'], global_phonemizer, tokenizer), 
+            lambda t: phonemize(t['text'], global_phonemizer, tokenizer, use_tokenizer, diacritizer), 
             remove_columns=['text']
         )
         
@@ -105,9 +175,11 @@ def process_missing_shards(
     dataset: Dataset, 
     global_phonemizer: Any, 
     tokenizer: Any, 
+    diacritizer: Any,
     num_shards: int, 
     max_workers: int,
-    timeout: int
+    timeout: int,
+    use_tokenizer: bool
 ) -> List[int]:
     """Process missing shards in parallel and return still missing shards."""
     if not missing_shards:
@@ -115,7 +187,7 @@ def process_missing_shards(
         
     print(f"Processing {len(missing_shards)} shards...")
     process_args = [
-        (i, root_directory, dataset, global_phonemizer, tokenizer, num_shards) 
+        (i, root_directory, dataset, global_phonemizer, tokenizer, diacritizer, num_shards, use_tokenizer) 
         for i in missing_shards
     ]
     
@@ -187,13 +259,23 @@ def main():
     config = yaml.safe_load(open(args.config_path))
     preprocess_params = config.get('preprocess_params', {})
     
-    # Initialize phonemizer and tokenizer
+    # Initialize phonemizer
     global_phonemizer = phonemizer.backend.EspeakBackend(
         language=preprocess_params.get('phonemizer_language', 'ar'), 
         preserve_punctuation=True, 
         with_stress=True
     )
-    tokenizer = AutoTokenizer.from_pretrained(preprocess_params.get('tokenizer'))
+    
+    # Initialize tokenizer or diacritizer based on use_tokenizer flag
+    tokenizer = None
+    diacritizer = None
+    
+    if args.use_tokenizer:
+        # If using tokenizer, load it but don't load diacritizer
+        tokenizer = AutoTokenizer.from_pretrained(preprocess_params.get('tokenizer'))
+    else:
+        # If not using tokenizer, load diacritizer but don't load tokenizer
+        diacritizer = CattTashkeel(device='cpu')
     
     # Load dataset - either from HuggingFace or local path
     if args.use_local_dataset:
@@ -240,9 +322,11 @@ def main():
             dataset, 
             global_phonemizer, 
             tokenizer, 
+            diacritizer,
             num_shards, 
             preprocess_params.get('max_workers'),
-            preprocess_params.get('timeout')
+            preprocess_params.get('timeout'),
+            args.use_tokenizer
         )
         
         if not missing_shards:

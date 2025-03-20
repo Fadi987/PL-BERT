@@ -15,14 +15,15 @@ sys.path.remove(CATT_PATH)
 
 
 class CattTashkeel:
-    def __init__(self):
+    def __init__(self, device: str = None):
         self.tokenizer = TashkeelTokenizer()
         self.ckpt_path = os.path.join(CATT_PATH, "models/best_ed_mlm_ns_epoch_178.pt")
 
         print('ckpt_path is:', self.ckpt_path)
 
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print('device:', self.device)
+        found_device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        self.device = device or found_device
+        print("Using device for CattTashkeel: ", self.device)
 
         self.max_seq_len = 1024
         print('Creating Model...')
