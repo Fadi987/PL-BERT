@@ -359,8 +359,54 @@ def create_expanded_dataset(dataset_path, max_seq_length=512, num_epochs=10):
     hf_dataset = Dataset.from_list(expanded_dataset)
     print(f"Saving expanded dataset to {output_path}...")
     hf_dataset.save_to_disk(output_path)
-    return hf_dataset, output_path
+    return output_path
+
+def phonemize_and_diacritize_dataset(dataset_path, output_path=None):
+    """
+    Iterate over a dataset and apply phonemization and diacritization to each text sample.
+    
+    Args:
+        dataset_path: Path to the dataset to process
+        output_path: Path to save the processed dataset (if None, will be derived from dataset_path)
+        batch_size: Batch size for processing
+        
+    Returns:
+        processed_dataset: The phonemized and diacritized dataset
+        output_path: Path where the dataset was saved
+    """
+    print(f"Loading dataset from {dataset_path}...")
+    dataset = load_from_disk(dataset_path)
+    
+    # Initialize phonemizer and diacritizer
+    print("Initializing phonemizer and diacritizer...")
+    global_phonemizer = phonemizer.backend.EspeakBackend(language='ar', preserve_punctuation=True, with_stress=True)
+    diacritizer = CattTashkeel()
+    
+    # Determine output path if not provided
+    if output_path is None:
+        parent_dir = os.path.dirname(dataset_path)
+        output_path = os.path.join(parent_dir, os.path.basename(dataset_path).replace('expanded', 'phonemized'))
+    
+    # Process the dataset
+    print(f"Processing {len(dataset)} samples...")
+    processed_samples = []
+    
+    # Process in batches
+    for sample in tqdm(dataset, desc="Phonemizing and diacritizing"):
+        text = sample["text"]
+        phonemes = phonemize_with_diacritization(text, global_phonemizer, diacritizer)
+        processed_samples.append({"text": text, "phonemes": phonemes})
+    
+    # Convert to HuggingFace dataset and save to disk
+    print(f"Converting to HuggingFace dataset format...")
+    processed_dataset = Dataset.from_list(processed_samples)
+    print(f"Saving phonemized dataset to {output_path}...")
+    processed_dataset.save_to_disk(output_path)
+    
+    return output_path
 
 if __name__ == "__main__":
-    output_path = main_clean()
-    create_expanded_dataset(output_path, num_epochs=2)
+    # output_path = main_clean()
+    # create_expanded_dataset(output_path, num_epochs=2)
+    output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.expanded'
+    phonemize_and_diacritize_dataset(output_path)
