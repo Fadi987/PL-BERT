@@ -500,12 +500,18 @@ def main_diacritize(dataset_path, output_dir=None, sample_size=200000):
         indices = np.random.choice(len(truncated_dataset), size=sample_size, replace=False)
         # Create a new dataset with only the sampled examples
         sampled_dataset = Dataset.from_dict({
-            'text': [truncated_dataset[int(idx)] for idx in indices]
+            'id': [truncated_dataset[int(idx)]['id'] for idx in indices],
+            'url': [truncated_dataset[int(idx)]['url'] for idx in indices],
+            'title': [truncated_dataset[int(idx)]['title'] for idx in indices],
+            'text': [truncated_dataset[int(idx)]['text'] for idx in indices]
         })
     else:
         print(f"Warning: Requested sample size {sample_size} is larger than dataset size {len(truncated_dataset)}. Using full dataset.")
         sampled_dataset = Dataset.from_dict({
-            'text': [truncated_dataset[int(idx)] for idx in range(len(truncated_dataset))]
+            'id': [truncated_dataset[int(idx)]['id'] for idx in range(len(truncated_dataset))],
+            'url': [truncated_dataset[int(idx)]['url'] for idx in range(len(truncated_dataset))],
+            'title': [truncated_dataset[int(idx)]['title'] for idx in range(len(truncated_dataset))],
+            'text': [truncated_dataset[int(idx)]['text'] for idx in range(len(truncated_dataset))]
         })
     
     # Initialize diacritizer
@@ -529,6 +535,9 @@ def main_diacritize(dataset_path, output_dir=None, sample_size=200000):
     
     # Create and save the processed dataset
     processed_dataset = Dataset.from_dict({
+        'id': sampled_dataset['id'],
+        'url': sampled_dataset['url'],
+        'title': sampled_dataset['title'],
         'text': sampled_dataset['text'],
         'diacritized_text': diacritized_texts
     })

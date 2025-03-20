@@ -155,7 +155,12 @@ class TruncatedTextDataset(torch.utils.data.Dataset):
         # Handle sequence length and truncation if needed
         truncated_text = self._truncate_text_if_needed(text)
         
-        return truncated_text
+        return {
+            'id': self.data[idx]['id'],
+            'url': self.data[idx]['url'],
+            'title': self.data[idx]['title'],
+            'text': truncated_text
+        }
     
     def _truncate_text_if_needed(self, text):
         """Truncate text to max_seq_length ensuring complete sentences are preserved."""
