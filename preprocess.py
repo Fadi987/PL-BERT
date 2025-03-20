@@ -15,7 +15,7 @@ from dataloader import TruncatedTextDataset
 from text_normalize import convert_numbers_to_arabic_words, filter_non_arabic_words, remove_diacritics, separate_words_and_punctuation, clean_text
 from util_models import CattTashkeel
 
-def clean_text_only(text):
+def standardize_text(text):
     """Perform text cleaning operations without phonemization.
     
     Args:
@@ -30,20 +30,18 @@ def clean_text_only(text):
     text = clean_text(text)
     return text
 
-def phonemize_text(text, phonemizer_instance):
-    """Perform phonemization without diacritization.
+def separate_text_into_segments(tokens):
+    """Separate tokens into text segments and punctuation.
     
     Args:
-        text: Input text to phonemize
-        phonemizer_instance: Phonemizer instance
+        tokens: List of tokens to separate
         
     Returns:
-        List of phonemes
+        Tuple containing:
+            - segments: List of text segments
+            - punctuations: List of punctuation tokens
+            - segment_indices: List of indices where segments end
     """
-    # Extract punctuation and text segments
-    tokens = separate_words_and_punctuation(text)
-    
-    # Group non-punctuation tokens into segments
     segments = []
     current_segment = []
     punctuations = []
@@ -63,6 +61,24 @@ def phonemize_text(text, phonemizer_instance):
     if current_segment:
         segments.append(" ".join(current_segment))
         segment_indices.append(len(tokens))
+        
+    return segments, punctuations, segment_indices
+
+def phonemize_text(text, phonemizer_instance):
+    """Perform phonemization without diacritization.
+    
+    Args:
+        text: Input text to phonemize
+        phonemizer_instance: Phonemizer instance
+        
+    Returns:
+        List of phonemes
+    """
+    # Extract punctuation and text segments
+    tokens = separate_words_and_punctuation(text)
+    
+    # Group non-punctuation tokens into segments
+    segments, punctuations, segment_indices = separate_text_into_segments(tokens)
     
     # Phonemize each segment and split into words
     phonemized_segments = []
@@ -106,25 +122,7 @@ def phonemize_with_diacritization(text, global_phonemizer, diacritizer=None):
     tokens = separate_words_and_punctuation(text)
     
     # Group non-punctuation tokens into segments
-    segments = []
-    current_segment = []
-    punctuations = []
-    segment_indices = []  # To track where punctuations should be inserted
-    
-    for i, token in enumerate(tokens):
-        if token in PUNCTUATION:
-            if current_segment:
-                segments.append(" ".join(current_segment))
-                segment_indices.append(i)
-                current_segment = []
-            punctuations.append(token)
-        else:
-            current_segment.append(token)
-    
-    # Add the last segment if it exists
-    if current_segment:
-        segments.append(" ".join(current_segment))
-        segment_indices.append(len(tokens))
+    segments, punctuations, segment_indices = separate_text_into_segments(tokens)
     
     # Diacritize the segments if diacritizer is provided
     if diacritizer is not None:
@@ -434,7 +432,7 @@ def main_clean():
     output_path = process_dataset(
         dataset=dataset,
         root_directory=root_directory,
-        process_fn=clean_text_only,
+        process_fn=standardize_text,
         output_dir=preprocess_params.get('cleaned_output_dir'),
         max_workers=preprocess_params.get('max_workers'),
         timeout=preprocess_params.get('timeout'),
@@ -474,47 +472,9 @@ def main_phonemize(dataset_path, output_dir=None):
     
     return output_path
 
-def create_expanded_dataset(dataset_path, max_seq_length=512, num_epochs=10):
-    """
-    Create an expanded dataset by iterating over a truncated dataset for multiple epochs.
-    
-    Args:
-        dataset: The original dataset to expand
-        max_seq_length: Maximum sequence length for truncation
-        num_epochs: Number of epochs to iterate over the dataset
-        
-    Returns:
-        expanded_dataset: List containing the expanded dataset samples
-    """
-    # Load the dataset
-    dataset = load_from_disk(dataset_path)
-    truncated_dataset = TruncatedTextDataset(dataset, max_seq_length=max_seq_length)
-    expanded_dataset = []
-    
-    print(f"Original dataset size: {len(truncated_dataset)}")
-    
-    # Determine output path by replacing 'cleaned' with 'expanded' in parent directory
-    parent_dir = os.path.dirname(dataset_path)
-    output_path = os.path.join(parent_dir, os.path.basename(dataset_path).replace('cleaned', 'expanded'))
-
-    # Iterate through epochs with tqdm for progress tracking
-    for epoch in range(num_epochs):
-        print(f"Processing epoch {epoch+1}/{num_epochs}...")
-        # Use tqdm to show progress bar for each epoch
-        for sample in tqdm(truncated_dataset, desc=f"Epoch {epoch+1}/{num_epochs}"):
-            expanded_dataset.append({"text": sample})
-    
-    # Convert to HuggingFace dataset and save to disk
-    print(f"Converting to HuggingFace dataset format...")
-    hf_dataset = Dataset.from_list(expanded_dataset)
-    print(f"Saving expanded dataset to {output_path}...")
-    hf_dataset.save_to_disk(output_path)
-    return output_path
-
 if __name__ == "__main__":
-    # output_path = main_clean()
-    output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.cleaned'
-    main_phonemize(output_path)
+    output_path = main_clean()
+    output_path = main_phonemize(output_path)
     # create_expanded_dataset(output_path, num_epochs=2)
     # output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.expanded'
     # phonemize_and_diacritize_dataset(output_path)
