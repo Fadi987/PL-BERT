@@ -35,11 +35,3 @@ class CattTashkeel:
         x = [remove_non_arabic(i) for i in x]
         x_tashkeel = self.model.do_tashkeel_batch(x, batch_size, verbose)
         return x_tashkeel
-
-model = CattTashkeel()
-
-# Create a batch of 16 identical sentences for testing
-test_sentence = 'وقالت مجلة نيوزويك الأمريكية التحديث الجديد ل إنستجرام يمكن أن يساهم في إيقاف وكشف الحسابات المزورة بسهولة شديدة'
-batch = [test_sentence] * 16
-results = model.do_tashkeel_batch(batch, 16, True)
-print(results)
