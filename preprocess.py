@@ -9,6 +9,7 @@ import phonemizer
 from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 import yaml
+import numpy as np
 
 from char_indexer import PUNCTUATION
 from dataloader import TruncatedTextDataset
@@ -107,7 +108,7 @@ def phonemize_text(text, phonemizer_instance):
                 
     return phonemes
 
-def phonemize_with_diacritization(text, global_phonemizer, diacritizer=None):
+def diacritize_text(text, diacritizer=None):
     """Convert text to phonemes using diacritization and word segmentation.
     
     Args:
@@ -129,33 +130,34 @@ def phonemize_with_diacritization(text, global_phonemizer, diacritizer=None):
         diacritized_segments = diacritizer.do_tashkeel_batch(segments, batch_size=16, verbose=False)
     else:
         diacritized_segments = segments
-    
-    # Phonemize each diacritized segment and split into words
-    phonemized_segments = []
+
+    # Split segments into tokens
+    diacritized_tokens = []
     for segment in diacritized_segments:
-        phonemized_segment = global_phonemizer.phonemize([segment], strip=True)[0]
-        # Split the phonemized segment into words
-        phonemized_words = phonemized_segment.split()
-        phonemized_segments.extend(phonemized_words)
-    
-    # Reconstruct the final phonemes list with punctuation in the correct positions
-    phonemes = []
-    seg_idx = 0
+        diacritized_tokens.extend(segment.split())
+
+    # Reconstruct the final diacritized text with punctuation in the correct positions
+    diacritized_text = ""
+    token_idx = 0
     punct_idx = 0
     
     for i in range(len(tokens)):
         if i in segment_indices:
             # We've reached the end of a segment, add punctuation
             if punct_idx < len(punctuations):
-                phonemes.append(punctuations[punct_idx])
+                diacritized_text += punctuations[punct_idx]
                 punct_idx += 1
         else:
-            # Add the next phonemized word from the current segment
-            if seg_idx < len(phonemized_segments):
-                phonemes.append(phonemized_segments[seg_idx])
-                seg_idx += 1
-                
-    return phonemes
+            # Add the next diacritized token
+            if token_idx < len(diacritized_tokens):
+                # Add space before word unless it's the first word
+                if diacritized_text and not diacritized_text.endswith(" "):
+                    diacritized_text += " "
+                diacritized_text += diacritized_tokens[token_idx]
+                token_idx += 1
+    
+    # Return the reconstructed diacritized text
+    return diacritized_text
 
 def phonemize_with_tokenizer(text, global_phonemizer, tokenizer):
     """Convert text to phonemes using tokenizer.
@@ -472,9 +474,78 @@ def main_phonemize(dataset_path, output_dir=None):
     
     return output_path
 
+def main_diacritize(dataset_path, output_dir=None, sample_size=200000):
+    """Main function to orchestrate the diacritization pipeline.
+    
+    Args:
+        dataset_path: Path to the dataset to diacritize
+        output_dir: Optional output directory name
+        sample_size: Number of samples to use (default: 200k)
+        
+    Returns:
+        Path to the processed dataset
+    """
+    # Load the dataset
+    print(f"Loading dataset from {dataset_path}...")
+    dataset = load_from_disk(dataset_path)
+    
+    # Create a TruncatedTextDataset
+    print("Creating truncated dataset...")
+    truncated_dataset = TruncatedTextDataset(dataset, max_seq_length=512)
+    
+    # Sample from the dataset
+    print(f"Sampling {sample_size} examples from dataset...")
+    if len(truncated_dataset) > sample_size:
+        # Generate random indices without replacement
+        indices = np.random.choice(len(truncated_dataset), size=sample_size, replace=False)
+        # Create a new dataset with only the sampled examples
+        sampled_dataset = Dataset.from_dict({
+            'text': [truncated_dataset[int(idx)] for idx in indices]
+        })
+    else:
+        print(f"Warning: Requested sample size {sample_size} is larger than dataset size {len(truncated_dataset)}. Using full dataset.")
+        sampled_dataset = Dataset.from_dict({
+            'text': [truncated_dataset[int(idx)] for idx in range(len(truncated_dataset))]
+        })
+    
+    # Initialize diacritizer
+    print("Initializing diacritizer...")
+    diacritizer = CattTashkeel()
+    
+    # Setup output path
+    root_directory = os.path.dirname(dataset_path)
+    if output_dir is None:
+        output_dir = os.path.basename(dataset_path).replace('cleaned', 'diacritized')
+    output_path = os.path.join(root_directory, output_dir)
+    
+    # Process the dataset sequentially with tqdm
+    print("Diacritizing texts sequentially...")
+    diacritized_texts = []
+    
+    for text in tqdm(sampled_dataset['text'], desc="Diacritizing"):
+        # remove diacritics before diacritizing to replicate CATT Tashkeel model conditioning
+        diacritized_text = diacritize_text(remove_diacritics(text), diacritizer)
+        diacritized_texts.append(diacritized_text)
+    
+    # Create and save the processed dataset
+    processed_dataset = Dataset.from_dict({
+        'text': sampled_dataset['text'],
+        'diacritized_text': diacritized_texts
+    })
+    
+    os.makedirs(output_path, exist_ok=True)
+    processed_dataset.save_to_disk(output_path)
+    print(f'Dataset saved to {output_path}')
+    print(f'Total samples: {len(processed_dataset)}')
+    
+    return output_path
+
+
 if __name__ == "__main__":
-    output_path = main_clean()
-    output_path = main_phonemize(output_path)
+    # output_path = main_clean()
+    # output_path = main_phonemize(output_path)
+    output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.cleaned'
+    output_path = main_diacritize(output_path)
     # create_expanded_dataset(output_path, num_epochs=2)
     # output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.expanded'
     # phonemize_and_diacritize_dataset(output_path)
