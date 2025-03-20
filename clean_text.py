@@ -6,10 +6,12 @@ from typing import List, Tuple, Set, Any
 from datasets import load_dataset, load_from_disk, concatenate_datasets, Dataset
 from pebble import ProcessPool
 import phonemizer
+from tqdm.auto import tqdm
 from transformers import AutoTokenizer
 import yaml
 
 from char_indexer import PUNCTUATION
+from dataloader import TruncatedTextDataset
 from text_normalize import convert_numbers_to_arabic_words, filter_non_arabic_words, remove_accents, separate_words_and_punctuation, clean_text
 from util_models import CattTashkeel
 
@@ -137,8 +139,7 @@ def process_shard(args: Tuple[int, str, Dataset, int]) -> Tuple[int, bool]:
         
         # Process the shard - only clean text
         processed_dataset = shard.map(
-            lambda t: {'cleaned_text': clean_text_only(t['text'])},
-            remove_columns=['text']
+            lambda t: {'text': clean_text_only(t['text'])},
         )
         
         os.makedirs(directory, exist_ok=True)
@@ -240,7 +241,7 @@ def cleanup_shards(root_directory: str) -> None:
                 print(f"Error removing {dirname}: {str(e)}")
     print(f"Removed {count} shard directories")
 
-def main():
+def main_clean():
     """Main function to orchestrate the text cleaning pipeline."""
     args = parse_args()
     
@@ -321,5 +322,46 @@ def main():
     # Clean up shard directories to free disk space
     cleanup_shards(root_directory)
 
+    return output_path
+
+def create_expanded_dataset(dataset_path, max_seq_length=512, num_epochs=10):
+    """
+    Create an expanded dataset by iterating over a truncated dataset for multiple epochs.
+    
+    Args:
+        dataset: The original dataset to expand
+        max_seq_length: Maximum sequence length for truncation
+        num_epochs: Number of epochs to iterate over the dataset
+        
+    Returns:
+        expanded_dataset: List containing the expanded dataset samples
+    """
+    # Load the dataset
+    dataset = load_from_disk(dataset_path)
+    truncated_dataset = TruncatedTextDataset(dataset, max_seq_length=max_seq_length)
+    expanded_dataset = []
+    
+    print(f"Original dataset size: {len(truncated_dataset)}")
+    
+    # Determine output path by replacing 'cleaned' with 'expanded' in parent directory
+    parent_dir = os.path.dirname(dataset_path)
+    output_path = os.path.join(parent_dir, os.path.basename(dataset_path).replace('cleaned', 'expanded'))
+
+    # Iterate through epochs with tqdm for progress tracking
+    for epoch in range(num_epochs):
+        print(f"Processing epoch {epoch+1}/{num_epochs}...")
+        # Use tqdm to show progress bar for each epoch
+        for sample in tqdm(truncated_dataset, desc=f"Epoch {epoch+1}/{num_epochs}"):
+            expanded_dataset.append({"text": sample})
+    
+    # Convert to HuggingFace dataset and save to disk
+    print(f"Converting to HuggingFace dataset format...")
+    hf_dataset = Dataset.from_list(expanded_dataset)
+    print(f"Saving expanded dataset to {output_path}...")
+    hf_dataset.save_to_disk(output_path)
+    return hf_dataset, output_path
+
 if __name__ == "__main__":
-    main()
+    # output_path = main_clean()
+    output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.cleaned'
+    create_expanded_dataset(output_path, num_epochs=2)
