@@ -2,7 +2,7 @@ import os
 import argparse
 import time
 import shutil
-from typing import List, Tuple, Set, Any
+from typing import List, Tuple, Set, Any, Callable
 from datasets import load_dataset, load_from_disk, concatenate_datasets, Dataset
 from pebble import ProcessPool
 import phonemizer
@@ -24,11 +24,72 @@ def clean_text_only(text):
     Returns:
         Cleaned text
     """
+    # TODO: remove diacritics when diacritizing 
     text = convert_numbers_to_arabic_words(text)
     text = filter_non_arabic_words(text)
-    text = remove_diacritics(text)
     text = clean_text(text)
     return text
+
+def phonemize_text(text, phonemizer_instance):
+    """Perform phonemization without diacritization.
+    
+    Args:
+        text: Input text to phonemize
+        phonemizer_instance: Phonemizer instance
+        
+    Returns:
+        List of phonemes
+    """
+    # Extract punctuation and text segments
+    tokens = separate_words_and_punctuation(text)
+    
+    # Group non-punctuation tokens into segments
+    segments = []
+    current_segment = []
+    punctuations = []
+    segment_indices = []  # To track where punctuations should be inserted
+    
+    for i, token in enumerate(tokens):
+        if token in PUNCTUATION:
+            if current_segment:
+                segments.append(" ".join(current_segment))
+                segment_indices.append(i)
+                current_segment = []
+            punctuations.append(token)
+        else:
+            current_segment.append(token)
+    
+    # Add the last segment if it exists
+    if current_segment:
+        segments.append(" ".join(current_segment))
+        segment_indices.append(len(tokens))
+    
+    # Phonemize each segment and split into words
+    phonemized_segments = []
+    for segment in segments:
+        phonemized_segment = phonemizer_instance.phonemize([segment], strip=True)[0]
+        # Split the phonemized segment into words
+        phonemized_words = phonemized_segment.split()
+        phonemized_segments.extend(phonemized_words)
+    
+    # Reconstruct the final phonemes list with punctuation in the correct positions
+    phonemes = []
+    seg_idx = 0
+    punct_idx = 0
+    
+    for i in range(len(tokens)):
+        if i in segment_indices:
+            # We've reached the end of a segment, add punctuation
+            if punct_idx < len(punctuations):
+                phonemes.append(punctuations[punct_idx])
+                punct_idx += 1
+        else:
+            # Add the next phonemized word from the current segment
+            if seg_idx < len(phonemized_segments):
+                phonemes.append(phonemized_segments[seg_idx])
+                seg_idx += 1
+                
+    return phonemes
 
 def phonemize_with_diacritization(text, global_phonemizer, diacritizer=None):
     """Convert text to phonemes using diacritization and word segmentation.
@@ -124,9 +185,19 @@ def parse_args():
     parser.add_argument("--use_local_dataset", action="store_true", help="Use local dataset instead of downloading from HuggingFace")
     return parser.parse_args()
 
-def process_shard(args: Tuple[int, str, Dataset, int]) -> Tuple[int, bool]:
-    """Process a single dataset shard."""
-    i, root_directory, dataset, num_shards = args
+def process_shard(args: Tuple[int, str, Dataset, int, Callable, Any]) -> Tuple[int, bool]:
+    """Process a single dataset shard.
+    
+    Args:
+        args: Tuple containing:
+            - i: Shard index
+            - root_directory: Directory to save shards
+            - dataset: Dataset to process
+            - num_shards: Total number of shards
+            - process_fn: Function to apply to each sample
+            - process_args: Additional arguments for process_fn
+    """
+    i, root_directory, dataset, num_shards, process_fn, process_args = args
     directory = os.path.join(root_directory, f"shard_{i}")
     
     if os.path.exists(directory):
@@ -137,10 +208,15 @@ def process_shard(args: Tuple[int, str, Dataset, int]) -> Tuple[int, bool]:
         print(f'Processing shard {i} ...')
         shard = dataset.shard(num_shards=num_shards, index=i)
         
-        # Process the shard - only clean text
-        processed_dataset = shard.map(
-            lambda t: {'text': clean_text_only(t['text'])},
-        )
+        # Process the shard with the provided function
+        if process_args:
+            processed_dataset = shard.map(
+                lambda t: process_fn(t, process_args),
+            )
+        else:
+            processed_dataset = shard.map(
+                lambda t: {'text': process_fn(t['text'])},
+            )
         
         os.makedirs(directory, exist_ok=True)
         processed_dataset.save_to_disk(directory)
@@ -169,21 +245,23 @@ def process_missing_shards(
     dataset: Dataset, 
     num_shards: int, 
     max_workers: int,
-    timeout: int
+    timeout: int,
+    process_fn: Callable,
+    process_args: Any = None
 ) -> List[int]:
     """Process missing shards in parallel and return still missing shards."""
     if not missing_shards:
         return []
         
     print(f"Processing {len(missing_shards)} shards...")
-    process_args = [
-        (i, root_directory, dataset, num_shards) 
+    process_args_list = [
+        (i, root_directory, dataset, num_shards, process_fn, process_args) 
         for i in missing_shards
     ]
     
     results = []
     with ProcessPool(max_workers=max_workers) as pool:
-        future = pool.map(process_shard, process_args, timeout=timeout)
+        future = pool.map(process_shard, process_args_list, timeout=timeout)
         
         iterator = future.result()
         while True:
@@ -241,6 +319,91 @@ def cleanup_shards(root_directory: str) -> None:
                 print(f"Error removing {dirname}: {str(e)}")
     print(f"Removed {count} shard directories")
 
+def process_dataset(dataset, root_directory, process_fn, process_args=None, output_dir=None, max_workers=4, timeout=3600, max_try_count=3, num_shards=10000):
+    """Generic function to process a dataset with the given function.
+    
+    Args:
+        dataset: Dataset to process
+        root_directory: Directory to save shards
+        process_fn: Function to apply to each sample
+        process_args: Additional arguments for process_fn
+        output_dir: Directory name for the output dataset
+        max_workers: Maximum number of parallel workers
+        timeout: Timeout for each worker
+        max_try_count: Maximum number of retry attempts
+        
+    Returns:
+        Path to the processed dataset
+    """
+    os.makedirs(root_directory, exist_ok=True)
+    
+    # Process all shards with retries
+    all_shards = list(range(num_shards))
+    try_count = 0
+    
+    while try_count < max_try_count:
+        try_count += 1
+        
+        # Check for already processed shards
+        existing_shards = get_existing_shards(root_directory)
+        missing_shards = [i for i in all_shards if i not in existing_shards]
+        
+        if not missing_shards:
+            print("All shards have been processed successfully!")
+            break
+            
+        print(f"Processing attempt {try_count}/{max_try_count} for {len(missing_shards)} shards")
+        
+        # Process missing shards
+        missing_shards = process_missing_shards(
+            missing_shards, 
+            root_directory, 
+            dataset, 
+            num_shards, 
+            max_workers,
+            timeout,
+            process_fn,
+            process_args
+        )
+        
+        if not missing_shards:
+            print("All shards have been processed successfully!")
+            break
+            
+        if try_count < max_try_count:
+            wait_time = 10 * try_count  # Increase wait time with each retry
+            print(f"Waiting {wait_time} seconds before next attempt...")
+            time.sleep(wait_time)
+    
+    if missing_shards:
+        print(f"Warning: {len(missing_shards)} shards could not be processed after {max_try_count} attempts")
+        print(f"Missing shards: {missing_shards}")
+    
+    # Combine all shards
+    print("Combining all processed shards...")
+    datasets = load_all_shards(root_directory)
+    
+    # Save final dataset
+    output_path = os.path.join(root_directory, output_dir) if output_dir else root_directory
+    combine_and_save_dataset(datasets, output_path)
+    
+    # Clean up shard directories to free disk space
+    cleanup_shards(root_directory)
+
+    return output_path
+
+def phonemize_wrapper(sample, phonemizer_instance):
+    """Wrapper function to phonemize a sample using the provided phonemizer.
+    
+    Args:
+        sample: Sample containing text to phonemize
+        phonemizer_instance: Phonemizer instance to use
+        
+    Returns:
+        Dictionary with original text and phonemized text
+    """
+    return {'text': sample['text'], 'phonemes': phonemize_text(sample['text'], phonemizer_instance)}
+
 def main_clean():
     """Main function to orchestrate the text cleaning pipeline."""
     args = parse_args()
@@ -266,62 +429,49 @@ def main_clean():
     
     # Setup processing parameters
     root_directory = preprocess_params.get('preprocess_dir')
-    os.makedirs(root_directory, exist_ok=True)
     
-    # Process all shards with retries
-    num_shards = preprocess_params.get('num_shards')
-    all_shards = list(range(num_shards))
-    try_count = 0
-    max_try_count = preprocess_params.get('max_try_count')
+    # Process the dataset with text cleaning
+    output_path = process_dataset(
+        dataset=dataset,
+        root_directory=root_directory,
+        process_fn=clean_text_only,
+        output_dir=preprocess_params.get('cleaned_output_dir'),
+        max_workers=preprocess_params.get('max_workers'),
+        timeout=preprocess_params.get('timeout'),
+        max_try_count=preprocess_params.get('max_try_count'),
+        num_shards=preprocess_params.get('num_shards')
+    )
     
-    while try_count < max_try_count:
-        try_count += 1
-        
-        # Check for already processed shards
-        existing_shards = get_existing_shards(root_directory)
-        missing_shards = [i for i in all_shards if i not in existing_shards]
-        
-        if not missing_shards:
-            print("All shards have been processed successfully!")
-            break
-            
-        print(f"Processing attempt {try_count}/{max_try_count} for {len(missing_shards)} shards")
-        
-        # Process missing shards
-        missing_shards = process_missing_shards(
-            missing_shards, 
-            root_directory, 
-            dataset, 
-            num_shards, 
-            preprocess_params.get('max_workers'),
-            preprocess_params.get('timeout')
-        )
-        
-        if not missing_shards:
-            print("All shards have been processed successfully!")
-            break
-            
-        if try_count < max_try_count:
-            wait_time = 10 * try_count  # Increase wait time with each retry
-            print(f"Waiting {wait_time} seconds before next attempt...")
-            time.sleep(wait_time)
-    
-    if missing_shards:
-        print(f"Warning: {len(missing_shards)} shards could not be processed after {max_try_count} attempts")
-        print(f"Missing shards: {missing_shards}")
-    
-    # Combine all shards
-    print("Combining all processed shards...")
-    datasets = load_all_shards(root_directory)
-    
-    # Save final dataset
-    output_dir = preprocess_params.get('cleaned_output_dir')
-    output_path = os.path.join(root_directory, output_dir)
-    combine_and_save_dataset(datasets, output_path)
-    
-    # Clean up shard directories to free disk space
-    cleanup_shards(root_directory)
+    return output_path
 
+def main_phonemize(dataset_path, output_dir=None):
+    """Main function to orchestrate the phonemization pipeline."""
+    # Load the dataset
+    print(f"Loading dataset from {dataset_path}...")
+    dataset = load_from_disk(dataset_path)
+    
+    # Initialize phonemizer
+    print("Initializing phonemizer...")
+    global_phonemizer = phonemizer.backend.EspeakBackend(language='ar', preserve_punctuation=True, with_stress=True)
+    
+    # Setup processing parameters
+    root_directory = os.path.dirname(dataset_path)
+    
+    # Process the dataset with phonemization
+    if output_dir is None:
+        output_dir = os.path.basename(dataset_path).replace('cleaned', 'phonemized')
+    
+    output_path = process_dataset(
+        dataset=dataset,
+        root_directory=root_directory,
+        process_fn=phonemize_wrapper,
+        process_args=global_phonemizer,
+        output_dir=output_dir,
+        max_workers=4,
+        timeout=3600,
+        max_try_count=3
+    )
+    
     return output_path
 
 def create_expanded_dataset(dataset_path, max_seq_length=512, num_epochs=10):
@@ -361,52 +511,10 @@ def create_expanded_dataset(dataset_path, max_seq_length=512, num_epochs=10):
     hf_dataset.save_to_disk(output_path)
     return output_path
 
-def phonemize_and_diacritize_dataset(dataset_path, output_path=None):
-    """
-    Iterate over a dataset and apply phonemization and diacritization to each text sample.
-    
-    Args:
-        dataset_path: Path to the dataset to process
-        output_path: Path to save the processed dataset (if None, will be derived from dataset_path)
-        batch_size: Batch size for processing
-        
-    Returns:
-        processed_dataset: The phonemized and diacritized dataset
-        output_path: Path where the dataset was saved
-    """
-    print(f"Loading dataset from {dataset_path}...")
-    dataset = load_from_disk(dataset_path)
-    
-    # Initialize phonemizer and diacritizer
-    print("Initializing phonemizer and diacritizer...")
-    global_phonemizer = phonemizer.backend.EspeakBackend(language='ar', preserve_punctuation=True, with_stress=True)
-    diacritizer = CattTashkeel()
-    
-    # Determine output path if not provided
-    if output_path is None:
-        parent_dir = os.path.dirname(dataset_path)
-        output_path = os.path.join(parent_dir, os.path.basename(dataset_path).replace('expanded', 'phonemized'))
-    
-    # Process the dataset
-    print(f"Processing {len(dataset)} samples...")
-    processed_samples = []
-    
-    # Process in batches
-    for sample in tqdm(dataset, desc="Phonemizing and diacritizing"):
-        text = sample["text"]
-        phonemes = phonemize_with_diacritization(text, global_phonemizer, diacritizer)
-        processed_samples.append({"text": text, "phonemes": phonemes})
-    
-    # Convert to HuggingFace dataset and save to disk
-    print(f"Converting to HuggingFace dataset format...")
-    processed_dataset = Dataset.from_list(processed_samples)
-    print(f"Saving phonemized dataset to {output_path}...")
-    processed_dataset.save_to_disk(output_path)
-    
-    return output_path
-
 if __name__ == "__main__":
     # output_path = main_clean()
+    output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.cleaned'
+    main_phonemize(output_path)
     # create_expanded_dataset(output_path, num_epochs=2)
-    output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.expanded'
-    phonemize_and_diacritize_dataset(output_path)
+    # output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.expanded'
+    # phonemize_and_diacritize_dataset(output_path)
