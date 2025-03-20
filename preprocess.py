@@ -314,7 +314,7 @@ def main():
     datasets = load_all_shards(root_directory)
     
     # Save final dataset
-    output_dir = preprocess_params.get('output_dir')
+    output_dir = preprocess_params.get('cleaned_output_dir')
     output_path = os.path.join(root_directory, output_dir)
     combine_and_save_dataset(datasets, output_path)
     
