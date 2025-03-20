@@ -12,7 +12,7 @@ import yaml
 
 from char_indexer import PUNCTUATION
 from dataloader import TruncatedTextDataset
-from text_normalize import convert_numbers_to_arabic_words, filter_non_arabic_words, remove_accents, separate_words_and_punctuation, clean_text
+from text_normalize import convert_numbers_to_arabic_words, filter_non_arabic_words, remove_diacritics, separate_words_and_punctuation, clean_text
 from util_models import CattTashkeel
 
 def clean_text_only(text):
@@ -26,7 +26,7 @@ def clean_text_only(text):
     """
     text = convert_numbers_to_arabic_words(text)
     text = filter_non_arabic_words(text)
-    text = remove_accents(text)
+    text = remove_diacritics(text)
     text = clean_text(text)
     return text
 

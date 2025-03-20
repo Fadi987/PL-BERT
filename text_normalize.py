@@ -174,9 +174,45 @@ def split_given_size(a, size):
 
 word_tokenize = TweetTokenizer().tokenize
 
-def remove_accents(input_str):
-    nfkd_form = unicodedata.normalize('NFKD', input_str)
-    return u"".join([c for c in nfkd_form if not unicodedata.combining(c)])
+def remove_diacritics(input_str):
+    """
+    Remove Arabic diacritics (tashkeel) from text.
+    
+    Removes the following diacritics:
+    - Fatha (َ)
+    - Kasra (ِ)
+    - Dhamma (ُ)
+    - Tanween Fath (ً)
+    - Tanween Kasr (ٍ)
+    - Tanween Dhamm (ٌ)
+    - Shadda (ّ)
+    - Shadda + Fatha (َّ)
+    - Shadda + Kasra (ِّ)
+    - Shadda + Dhamma (ُّ)
+    - Shadda + Tanween Fath (ًّ)
+    - Shadda + Tanween Kasr (ٍّ)
+    - Shadda + Tanween Dhamm (ٌّ)
+    - Sukoon (ْ)
+    """
+    # Dictionary mapping each Arabic diacritic to its Unicode character
+    arabic_diacritics = {
+        '\u064B': 'Tanween Fath',
+        '\u064C': 'Tanween Dhamm',
+        '\u064D': 'Tanween Kasr',
+        '\u064E': 'Fatha',        
+        '\u064F': 'Dhamma',      
+        '\u0650': 'Kasra',        
+        '\u0651': 'Shadda',         
+        '\u0652': 'Sukoon',          
+        '\u0670': 'Alef Superscript' 
+    }
+    
+    # Create a pattern with all diacritics
+    pattern = '|'.join(re.escape(diacritic) for diacritic in arabic_diacritics.keys())
+    diacritics_pattern = re.compile(f'({pattern})')
+    
+    # Remove all diacritics
+    return diacritics_pattern.sub('', input_str)
 
 def has_numbers(inputString):
     return any(char.isdigit() for char in inputString)
