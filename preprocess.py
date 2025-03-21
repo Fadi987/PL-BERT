@@ -178,7 +178,7 @@ def phonemize_with_tokenizer(text, global_phonemizer, tokenizer):
 
 def parse_args():
     """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description="Clean text data for preprocessing")
+    parser = argparse.ArgumentParser(description="Clean/phonemize/diacritize text data for PL-BERT training")
     parser.add_argument("--config_path", type=str, default="external/pl_bert/configs/config.yml", help="Path to config file")
     parser.add_argument("--local_dataset_path", type=str, default=None, help="Path to local dataset (if using local data)")
     parser.add_argument("--use_local_dataset", action="store_true", help="Use local dataset instead of downloading from HuggingFace")
