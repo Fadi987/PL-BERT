@@ -550,10 +550,12 @@ def main_diacritize(dataset_path, output_dir=None, sample_size=200000):
 
 
 if __name__ == "__main__":
-    # output_path = main_clean()
-    # output_path = main_phonemize(output_path)
-    output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.cleaned'
-    output_path = main_diacritize(output_path)
-    # create_expanded_dataset(output_path, num_epochs=2)
-    # output_path = '/root/notebooks/voiceAI/arabic_audio_ai_fadi/data/pl_bert/wikipedia_20231101.ar.expanded'
-    # phonemize_and_diacritize_dataset(output_path)
+    # Clean dataset as a common first step
+    cleaned_path = main_clean()
+
+    # Phonemize dataset
+    phonemized_path = main_phonemize(cleaned_path)
+
+    # Diacritize and phonemize a sub-sample of the dataset for fine-tuning 
+    diacritized_path = main_diacritize(cleaned_path)
+    main_phonemize(diacritized_path)
