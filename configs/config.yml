@@ -8,7 +8,7 @@ preprocess_params:
     preprocess_dir: "data/pl_bert"
     hf_dataset_name: "wikimedia/wikipedia"
     hf_dataset_split: "20231101.ar"
-    output_dir: "wikipedia_20231101.ar.processed"
+    cleaned_output_dir: "wikipedia_20231101.ar.cleaned"
 
 training_params:
     output_dir: "checkpoints"

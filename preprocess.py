@@ -25,7 +25,6 @@ def standardize_text(text):
     Returns:
         Cleaned text
     """
-    # TODO: remove diacritics when diacritizing 
     text = convert_numbers_to_arabic_words(text)
     text = filter_non_arabic_words(text)
     text = clean_text(text)
