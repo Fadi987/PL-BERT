@@ -7,7 +7,7 @@ import random
 import torch
 from torch.utils.data import DataLoader
 
-from char_indexer import CharacterIndexer, PHONEME_MASK, PHONEME_SEPARATOR
+from char_indexer import CharacterIndexer, PHONEME_MASK, PHONEME_SEPARATOR, PUNCTUATION
 
 import logging
 logger = logging.getLogger(__name__)
@@ -140,6 +140,62 @@ class MaskedPhonemeDataset(torch.utils.data.Dataset):
         assert len(masked_phonemes) == len(phoneme_labels)
         
         return masked_phonemes, phoneme_labels, output_token_ids
+
+class TruncatedTextDataset(torch.utils.data.Dataset):
+    def __init__(self, dataset, max_seq_length):
+        self.data = dataset
+        self.max_seq_length = max_seq_length
+        
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        text = self.data[idx]['text']
+        
+        # Handle sequence length and truncation if needed
+        truncated_text = self._truncate_text_if_needed(text)
+        
+        return {
+            'id': self.data[idx]['id'],
+            'url': self.data[idx]['url'],
+            'title': self.data[idx]['title'],
+            'text': truncated_text
+        }
+    
+    def _truncate_text_if_needed(self, text):
+        """Truncate text to max_seq_length ensuring complete sentences are preserved."""
+        seq_length = len(text)
+        if seq_length <= self.max_seq_length:
+            return text
+            
+        
+        # Find a random starting point
+        random_start = np.random.randint(0, max(1, seq_length - self.max_seq_length))
+        
+        # Adjust start to beginning of a sentence if possible
+        if random_start > 0:
+            # Look backward for the nearest sentence boundary
+            for i in range(random_start - 1, -1, -1):
+                if text[i] in PUNCTUATION:
+                    random_start = i + 1  # Start after the punctuation
+                    break
+        
+        # Calculate potential end position
+        end = min(random_start + self.max_seq_length, seq_length)
+        
+        # Adjust end to complete the last sentence if possible
+        if end < seq_length:
+            # Look forward for the nearest sentence boundary
+            for i in range(end, min(seq_length, end + int(0.2 * self.max_seq_length))):
+                if text[i] in PUNCTUATION:
+                    end = i + 1  # Include the punctuation
+                    break
+                    
+        # Sample a sequence of sentences
+        text = text[random_start:end]
+        
+        return text
+    
 
 class Collater(object):
     def __call__(self, batch):
