@@ -37,8 +37,9 @@ app = modal.App(name="test", image=training_image)
 volume = modal.Volume.from_name("pl_bert", create_if_missing=True)
 
 @app.function(
-    volumes={"/checkpoints": volume},
-    secrets=[modal.Secret.from_name("wandb-secret"), modal.Secret.from_name("huggingface-secret")])
+    volumes={"/pl_bert": volume},
+    secrets=[modal.Secret.from_name("wandb-secret"), modal.Secret.from_name("huggingface-secret")],
+    timeout = 86400)
 def train_main():
     _ = track_restarts(restart_tracker_dict)
     train.train({"config_path": "/root/configs/config.yml", "run_name": "default"})
