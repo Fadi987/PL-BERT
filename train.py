@@ -131,9 +131,9 @@ def calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_i
 
     return loss_phoneme
 
-def train():
-    args = parse_args()
-    config_path = args.config_path
+def train(args = None):
+    if args is None: args = parse_args()
+    config_path = args['config_path']
     
     # Setup configuration and directories
     config, log_dir, resuming = setup_config_and_directories(args, config_path)
@@ -179,7 +179,7 @@ def setup_config_and_directories(args, config_path):
     
     # Set up log directory
     base_log_dir = original_config['training_params']['output_dir']
-    log_dir = os.path.join(base_log_dir, args.run_name)
+    log_dir = os.path.join(base_log_dir, args['run_name'])
     
     # Check if run folder exists
     if os.path.exists(log_dir):
