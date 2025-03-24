@@ -334,6 +334,8 @@ def train_loop(model, optimizer, train_dataloader, val_dataloader, criterion, ac
                phoneme_losses, log_dir, max_epochs):
     """Main training loop."""
     current_epoch = 0
+
+    run_validation_and_log(model, val_dataloader, criterion, accelerator, current_step, current_epoch)
     
     while current_epoch < max_epochs:
         current_epoch += 1
