@@ -16,12 +16,12 @@ import numpy as np
 from accelerate import Accelerator, DistributedDataParallelKwargs
 
 # Transformers imports
-from transformers import AlbertConfig, AlbertModel, AutoTokenizer
+from transformers import AlbertConfig, AlbertModel 
 from torch.optim import AdamW
 
 # Local imports
 from dataloader import build_dataloader
-from model import MultiTaskModel
+from model import PhonemeOnlyModel
 from char_indexer import symbols
 
 def parse_args():
@@ -106,26 +106,6 @@ def load_checkpoint(model, optimizer, log_dir, last_iter, accelerator):
     
     return model, optimizer
 
-def calculate_token_loss(token_pred, token_ids, input_lengths, criterion):
-    """
-    Calculate the token prediction loss.
-    
-    Args:
-        token_pred: Predicted token logits
-        token_ids: Ground truth token IDs
-        input_lengths: Length of each input sequence
-        criterion: Loss function
-        
-    Returns:
-        float: Average token loss
-    """
-    loss_token = 0
-    for _s2s_pred, _text_input, _text_length in zip(token_pred, token_ids, input_lengths):
-        loss_token += criterion(_s2s_pred[:_text_length], 
-                                _text_input[:_text_length])
-    loss_token /= token_ids.size(0)
-    return loss_token
-
 def calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_indices, criterion):
     """
     Calculate the phoneme prediction loss.
@@ -166,16 +146,16 @@ def train():
     max_epochs = 10
     
     # Initialize components
-    tokenizer, criterion, accelerator = initialize_components(config, training_params, log_dir, args.resume)
+    criterion, accelerator = initialize_components(config, training_params, log_dir, args.resume)
     
     # Initialize wandb and metrics tracking
-    token_losses, phoneme_losses, total_losses = initialize_metrics_tracking(accelerator, config, log_interval)
+    phoneme_losses = initialize_metrics_tracking(accelerator, config, log_interval)
     
     # Setup dataset and dataloader
     train_dataloader, val_dataloader = setup_dataset_and_dataloader(config, accelerator)
     
     # Initialize model
-    bert, optimizer, current_step = initialize_model(config, tokenizer, log_dir, args.resume, accelerator)
+    bert, optimizer, current_step = initialize_model(config, log_dir, args.resume, accelerator)
     
     # Prepare for distributed training
     bert, optimizer, train_dataloader, val_dataloader = accelerator.prepare(
@@ -187,7 +167,7 @@ def train():
     current_step, current_epoch = train_loop(
         bert, optimizer, train_dataloader, val_dataloader, criterion, accelerator,
         current_step, num_steps, save_interval, log_interval,
-        token_losses, phoneme_losses, total_losses, log_dir, max_epochs
+        phoneme_losses, log_dir, max_epochs
     )
     
     accelerator.print(f'Training completed at step {current_step}, epoch {current_epoch}')
@@ -233,11 +213,8 @@ def setup_config_and_directories(args, config_path):
     
     return config, log_dir
 
-def initialize_components(config, training_params, log_dir, resume):
+def initialize_components(training_params, log_dir, resume):
     """Initialize tokenizer, loss function, and accelerator."""
-    # Initialize tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(config['preprocess_params']['tokenizer'])
-    
     # Initialize loss function
     criterion = nn.CrossEntropyLoss()
     
@@ -253,7 +230,7 @@ def initialize_components(config, training_params, log_dir, resume):
     else:
         accelerator.print(f"Starting new training run in '{log_dir}'.")
     
-    return tokenizer, criterion, accelerator
+    return criterion, accelerator
 
 def initialize_metrics_tracking(accelerator, config, log_interval):
     """Initialize wandb and metrics tracking queues."""
@@ -262,11 +239,9 @@ def initialize_metrics_tracking(accelerator, config, log_interval):
         wandb.init(project="pl-bert", config=config)
     
     # Initialize rolling window queues for losses
-    token_losses = deque(maxlen=log_interval)
     phoneme_losses = deque(maxlen=log_interval)
-    total_losses = deque(maxlen=log_interval)
     
-    return token_losses, phoneme_losses, total_losses
+    return phoneme_losses
 
 def setup_dataset_and_dataloader(config, accelerator):
     """Load dataset and create dataloader."""
@@ -288,15 +263,14 @@ def setup_dataset_and_dataloader(config, accelerator):
     
     return train_dataloader, val_dataloader
 
-def initialize_model(config, tokenizer, log_dir, resume, accelerator):
+def initialize_model(config, log_dir, resume, accelerator):
     """Initialize model, optimizer, and load checkpoint if resuming."""
     albert_base_configuration = AlbertConfig(vocab_size=len(symbols), **config['model_params'])
     
     bert = AlbertModel(albert_base_configuration)
-    bert = MultiTaskModel(
+    bert = PhonemeOnlyModel(
         bert, 
         num_phonemes=len(symbols), 
-        num_tokens=tokenizer.vocab_size, 
         hidden_size=config['model_params']['hidden_size']
     )
     
@@ -314,26 +288,20 @@ def initialize_model(config, tokenizer, log_dir, resume, accelerator):
 def validate(model, val_dataloader, criterion, accelerator):
     """Run validation and return metrics."""
     model.eval()
-    val_token_loss = 0
     val_phoneme_loss = 0
-    val_total_loss = 0
     num_batches = 0
     
     with torch.no_grad():
         for batch in val_dataloader:
-            loss_token, loss_phoneme, loss = process_batch(model, batch, criterion, accelerator)
-            val_token_loss += loss_token.item()
+            loss_phoneme = process_batch(model, batch, criterion, accelerator)
             val_phoneme_loss += loss_phoneme.item()
-            val_total_loss += loss.item()
             num_batches += 1
     
     # Calculate average losses
-    val_token_loss /= num_batches
     val_phoneme_loss /= num_batches
-    val_total_loss /= num_batches
     
     model.train()
-    return val_token_loss, val_phoneme_loss, val_total_loss
+    return val_phoneme_loss
 
 def run_validation_and_log(model, val_dataloader, criterion, accelerator, current_step, current_epoch):
     """Run validation and log the results.
@@ -347,33 +315,29 @@ def run_validation_and_log(model, val_dataloader, criterion, accelerator, curren
         current_epoch: Current training epoch
     
     Returns:
-        tuple: (val_token_loss, val_phoneme_loss, val_total_loss)
+        float: val_phoneme_loss
     """
     # Run validation
-    val_token_loss, val_phoneme_loss, val_total_loss = validate(
+    val_phoneme_loss = validate(
         model, val_dataloader, criterion, accelerator
     )
     
     # Log validation metrics
     if accelerator.is_main_process:
         wandb.log({
-            "val_token_loss": val_token_loss,
             "val_phoneme_loss": val_phoneme_loss,
-            "val_total_loss": val_total_loss,
             "step": current_step,
             "epoch": current_epoch
         })
         
     accelerator.print(f"Validation at step {current_step}: "
-                     f"Token Loss: {val_token_loss:.4f}, "
-                     f"Phoneme Loss: {val_phoneme_loss:.4f}, "
-                     f"Total Loss: {val_total_loss:.4f}")
+                     f"Phoneme Loss: {val_phoneme_loss:.4f}")
     
-    return val_token_loss, val_phoneme_loss, val_total_loss
+    return val_phoneme_loss
 
 def train_loop(model, optimizer, train_dataloader, val_dataloader, criterion, accelerator, 
                current_step, num_steps, save_interval, log_interval,
-               token_losses, phoneme_losses, total_losses, log_dir, max_epochs):
+               phoneme_losses, log_dir, max_epochs):
     """Main training loop."""
     current_epoch = 0
     
@@ -383,19 +347,19 @@ def train_loop(model, optimizer, train_dataloader, val_dataloader, criterion, ac
         
         for _, batch in enumerate(train_dataloader):
             # Process batch and compute loss
-            loss_token, loss_phoneme, loss = process_batch(model, batch, criterion, accelerator)
+            loss_phoneme = process_batch(model, batch, criterion, accelerator)
             
             # Optimization step
             optimizer.zero_grad()
-            accelerator.backward(loss)
+            accelerator.backward(loss_phoneme)
             optimizer.step()
             
             current_step += 1
             
             # Update metrics and log
             update_metrics_and_log(
-                accelerator, loss_token, loss_phoneme, loss,
-                token_losses, phoneme_losses, total_losses,
+                accelerator, loss_phoneme,
+                phoneme_losses,
                 log_interval, current_epoch
             )
             
@@ -414,42 +378,33 @@ def train_loop(model, optimizer, train_dataloader, val_dataloader, criterion, ac
 
 def process_batch(model, batch, criterion, accelerator):
     """Process a batch of data and compute losses."""
-    token_ids, phoneme_labels, masked_phonemes, input_lengths, masked_indices = batch
+    phoneme_labels, masked_phonemes, input_lengths, masked_indices = batch
     text_mask = length_to_mask(torch.Tensor(input_lengths)).to(accelerator.device)
     
-    phoneme_pred, token_pred = model(masked_phonemes, attention_mask=(~text_mask).int())
+    phoneme_pred = model(masked_phonemes, attention_mask=(~text_mask).int())
     
     loss_phoneme = calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_indices, criterion)
-    loss_token = calculate_token_loss(token_pred, token_ids, input_lengths, criterion)
     
-    loss = loss_token + loss_phoneme
-    
-    return loss_token, loss_phoneme, loss
+    return loss_phoneme
 
-def update_metrics_and_log(accelerator, loss_token, loss_phoneme, loss,
-                          token_losses, phoneme_losses, total_losses,
+def update_metrics_and_log(accelerator, loss_phoneme,
+                          phoneme_losses,
                           log_interval, current_epoch):
     """Update metrics tracking and log to wandb."""
     # Update rolling window queues
-    token_losses.append(loss_token.item())
     phoneme_losses.append(loss_phoneme.item())
-    total_losses.append(loss.item())
     
     # Log metrics to wandb
     if accelerator.is_main_process:
         log_dict = {
-            "token_loss": loss_token.item(),
             "phoneme_loss": loss_phoneme.item(),
-            "total_loss": loss.item(),
             "epoch": current_epoch
         }
         
         # Add rolling window metrics if we have enough data
-        if len(total_losses) == log_interval:
+        if len(phoneme_losses) == log_interval:
             log_dict.update({
-                "token_loss_avg": np.mean(token_losses),
-                "phoneme_loss_avg": np.mean(phoneme_losses),
-                "total_loss_avg": np.mean(total_losses)
+                "phoneme_loss_avg": np.mean(phoneme_losses)
             })
             
         wandb.log(log_dict)
