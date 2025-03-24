@@ -163,7 +163,7 @@ def train():
     num_steps = training_params['num_steps']
     log_interval = training_params['log_interval']
     save_interval = training_params['save_interval']
-    max_epochs = 9
+    max_epochs = 10
     
     # Initialize components
     tokenizer, criterion, accelerator = initialize_components(config, training_params, log_dir, args.resume)
