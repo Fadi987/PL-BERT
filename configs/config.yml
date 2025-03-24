@@ -11,7 +11,7 @@ preprocess_params:
   cleaned_output_dir: "wikipedia_20231101.ar.cleaned"
 
 training_params:
-  output_dir: "checkpoints"
+  output_dir: "/pl_bert/checkpoints"
   mixed_precision: "fp16"
   batch_size: 192
   save_interval: 5000

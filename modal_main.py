@@ -39,6 +39,7 @@ volume = modal.Volume.from_name("pl_bert", create_if_missing=True)
 @app.function(
     volumes={"/pl_bert": volume},
     secrets=[modal.Secret.from_name("wandb-secret"), modal.Secret.from_name("huggingface-secret")],
+    gpu="A100-40GB",
     timeout = 86400)
 def train_main():
     _ = track_restarts(restart_tracker_dict)
