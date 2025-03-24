@@ -43,7 +43,7 @@ volume = modal.Volume.from_name("pl_bert", create_if_missing=True)
     timeout = 86400)
 def train_main():
     _ = track_restarts(restart_tracker_dict)
-    train.train({"config_path": "/root/configs/config.yml", "run_name": "default"})
+    train.train({"config_path": "/root/configs/config.yml", "run_name": "modal_phoneme_only_non_diacritics"})
 
 @app.local_entrypoint()
 def main():

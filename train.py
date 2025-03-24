@@ -233,7 +233,7 @@ def initialize_metrics_tracking(accelerator, config, log_interval):
     """Initialize wandb and metrics tracking queues."""
     # Initialize wandb
     if accelerator.is_main_process:
-        wandb.init(project="pl-bert", config=config)
+        wandb.init(project="pl_bert_phoneme_only", config=config)
     
     # Initialize rolling window queues for losses
     phoneme_losses = deque(maxlen=log_interval)
