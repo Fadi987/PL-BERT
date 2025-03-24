@@ -222,7 +222,7 @@ class Collater(object):
 
         return batch_token_ids, batch_phoneme_labels, batch_masked_phonemes, input_lengths, batch_masked_indices
 
-def build_dataloader(df, validation, device, dataset_config, use_token_ids=True, **kwargs):
+def build_dataloader(df, validation, device, dataset_config, use_token_ids=False, **kwargs):
     dataset = MaskedPhonemeDataset(df, use_token_ids=use_token_ids, **dataset_config)
     
     # Use appropriate collator based on whether we're using token_ids
