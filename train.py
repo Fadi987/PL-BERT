@@ -29,7 +29,6 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train phoneme-level BERT model")
     parser.add_argument("--config_path", type=str, default="configs/config.yml", help="Path to config file")
     parser.add_argument("--run_name", type=str, default="default", help="Name of the run for organizing checkpoints")
-    parser.add_argument("--resume", action="store_true", default=False, help="Resume training from latest checkpoint")
     return parser.parse_args()
 
 def length_to_mask(lengths):
@@ -137,7 +136,7 @@ def train():
     config_path = args.config_path
     
     # Setup configuration and directories
-    config, log_dir = setup_config_and_directories(args, config_path)
+    config, log_dir, resuming = setup_config_and_directories(args, config_path)
     
     # Extract training parameters
     training_params = config['training_params']
@@ -147,7 +146,7 @@ def train():
     max_epochs = 10
     
     # Initialize components
-    criterion, accelerator = initialize_components(training_params, log_dir, args.resume)
+    criterion, accelerator = initialize_components(training_params, log_dir, resuming)
     
     # Initialize wandb and metrics tracking
     phoneme_losses = initialize_metrics_tracking(accelerator, config, log_interval)
@@ -156,7 +155,7 @@ def train():
     train_dataloader, val_dataloader = setup_dataset_and_dataloader(config, accelerator)
     
     # Initialize model
-    bert, optimizer, current_step = initialize_model(config, log_dir, args.resume, accelerator)
+    bert, optimizer, current_step = initialize_model(config, log_dir, resuming, accelerator)
     
     # Prepare for distributed training
     bert, optimizer, train_dataloader, val_dataloader = accelerator.prepare(
@@ -174,47 +173,44 @@ def train():
     accelerator.print(f'Training completed at step {current_step}, epoch {current_epoch}')
 
 def setup_config_and_directories(args, config_path):
-    """Setup configuration and directories based on resume flag."""
-    base_log_dir = None
-    log_dir = None
-    
-    # Load the appropriate config based on resume flag
-    if args.resume:
-        # When resuming, first check if the run directory exists
-        base_log_dir = yaml.safe_load(open(config_path))['training_params']['output_dir']
-        log_dir = os.path.join(base_log_dir, args.run_name)
-        
-        if not os.path.exists(log_dir):
-            raise FileNotFoundError(f"Cannot resume training: Run directory '{log_dir}' not found.")
-        
-        # Use the config from the run directory instead of the provided one
-        config_file = os.path.join(log_dir, os.path.basename(config_path))
-        if not os.path.exists(config_file):
-            raise FileNotFoundError(f"Cannot resume training: Config file not found in '{log_dir}'.")
-        
-        config = yaml.safe_load(open(config_file))
-    else:
-        # For new runs, use the provided config
-        config = yaml.safe_load(open(config_path))
+    """Setup configuration and directories based on run folder existence."""
+    # Load the provided config first
+    original_config = yaml.safe_load(open(config_path))
     
     # Set up log directory
-    base_log_dir = config['training_params']['output_dir']
+    base_log_dir = original_config['training_params']['output_dir']
     log_dir = os.path.join(base_log_dir, args.run_name)
     
-    # Handle directory setup
-    if not args.resume:
-        # Start from scratch - remove existing directory if it exists
-        if os.path.exists(log_dir):
-            shutil.rmtree(log_dir)
+    # Check if run folder exists
+    if os.path.exists(log_dir):
+        # Run folder exists, check for config
+        config_file = os.path.join(log_dir, os.path.basename(config_path))
         
-        # Create fresh directory
+        if os.path.exists(config_file):
+            # Config exists, load it and prepare to resume
+            config = yaml.safe_load(open(config_file))
+            resuming = True
+        else:
+            # Config doesn't exist, clean directory and start fresh
+            for f in os.listdir(log_dir):
+                if f.startswith("step_"):
+                    os.remove(os.path.join(log_dir, f))
+            
+            # Copy the config file to the run directory
+            shutil.copy(config_path, config_file)
+            config = original_config
+            resuming = False
+    else:
+        # Run folder doesn't exist, create it and start fresh
         os.makedirs(log_dir, exist_ok=True)
         # Copy the config file to the run directory
         shutil.copy(config_path, os.path.join(log_dir, os.path.basename(config_path)))
+        config = original_config
+        resuming = False
     
-    return config, log_dir
+    return config, log_dir, resuming
 
-def initialize_components(training_params, log_dir, resume):
+def initialize_components(training_params, log_dir, resuming):
     """Initialize tokenizer, loss function, and accelerator."""
     # Initialize loss function
     criterion = nn.CrossEntropyLoss()
@@ -226,7 +222,7 @@ def initialize_components(training_params, log_dir, resume):
                              kwargs_handlers=[ddp_kwargs])
     
     # Log status message
-    if resume:
+    if resuming:
         accelerator.print(f"Resuming training from '{log_dir}' with existing config.")
     else:
         accelerator.print(f"Starting new training run in '{log_dir}'.")
@@ -261,7 +257,7 @@ def setup_dataset_and_dataloader(config, accelerator):
     
     return train_dataloader, val_dataloader
 
-def initialize_model(config, log_dir, resume, accelerator):
+def initialize_model(config, log_dir, resuming, accelerator):
     """Initialize model, optimizer, and load checkpoint if resuming."""
     albert_base_configuration = AlbertConfig(vocab_size=len(symbols), **config['model_params'])
     
@@ -276,7 +272,7 @@ def initialize_model(config, log_dir, resume, accelerator):
     
     optimizer = AdamW(bert.parameters(), lr=float(config['training_params']['learning_rate']))
     
-    if is_checkpoint_found and resume:
+    if is_checkpoint_found and resuming:
         bert, optimizer = load_checkpoint(bert, optimizer, log_dir, current_step, accelerator)
     else:
         current_step = 0
