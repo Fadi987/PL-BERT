@@ -2,10 +2,10 @@
 
 import string
 
-PAD = "$"
+PAD = "P"
 PUNCTUATION = ''.join(sorted(set(';:,.!?¡¿—…"«»“”‘’،؛؟٫٬٪﴾﴿ـ' + string.punctuation)))
 LETTERS_IPA = 'ɑɐɒæɓʙβɔɕçɗɖðʤəɘɚɛɜɝɞɟʄɡɠɢʛɦɧħɥʜɨɪʝɭɬɫɮʟɱɯɰŋɳɲɴøɵɸθœɶʘɹɺɾɻʀʁɽʂʃʈʧʉʊʋⱱʌɣɤʍχʎʏʑʐʒʔʡʕʢǀǁǂǃˈˌːˑʼʴʰʱʲʷˠˤ˞↓↑→↗↘̩ᵻ'
-LATIN_LETTERS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+LATIN_LETTERS = 'abcdefghijklmnopqrstuvwxyz'
 PHONEME_MASK = "M"
 PHONEME_SEPARATOR = " "
 # NOTE: '¤' is a valid 'unknown' character because it is different from all the characters above it. In English PL-BERT, 'U' was used as the unknown character which was not ideal as it was part of the English alphabet

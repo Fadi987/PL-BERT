@@ -18,7 +18,7 @@ random.seed(1)
 
 class MaskedPhonemeDataset(torch.utils.data.Dataset):
     def __init__(self, dataset, word_pred_prob, phoneme_mask_prob, 
-                 replace_prob, word_separator, max_seq_length, use_token_ids=True):
+                 replace_prob, word_separator, max_seq_length, use_token_ids):
 
         self.data = dataset
         self.max_seq_length = max_seq_length
@@ -222,7 +222,7 @@ class Collater(object):
 
         return batch_token_ids, batch_phoneme_labels, batch_masked_phonemes, input_lengths, batch_masked_indices
 
-def build_dataloader(df, validation, device, dataset_config, use_token_ids=False, **kwargs):
+def build_dataloader(df, batch_size, validation, device, dataset_config, use_token_ids, **kwargs):
     dataset = MaskedPhonemeDataset(df, use_token_ids=use_token_ids, **dataset_config)
     
     # Use appropriate collator based on whether we're using token_ids
@@ -231,7 +231,7 @@ def build_dataloader(df, validation, device, dataset_config, use_token_ids=False
     else:
         collate_fn = PhonemeOnlyCollater()
     
-    data_loader = DataLoader(dataset, shuffle=(not validation), drop_last=(not validation), 
+    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=(not validation), drop_last=(not validation), 
                             collate_fn=collate_fn, pin_memory=(device != 'cpu'), **kwargs)
 
     return data_loader
