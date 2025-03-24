@@ -120,7 +120,7 @@ def calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_i
     Returns:
         float: Average phoneme loss
     """
-    loss_phoneme = 0
+    loss_phoneme = torch.tensor(0.0, device=phoneme_pred.device, requires_grad=True)
     count = 0
     for _s2s_pred, _text_input, _text_length, _masked_indices in zip(phoneme_pred, phoneme_labels, input_lengths, masked_indices):
         if len(_masked_indices) > 0:
@@ -128,7 +128,8 @@ def calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_i
                                  _text_input[:_text_length][_masked_indices])
             loss_phoneme += loss_tmp
             count += 1
-    loss_phoneme = loss_phoneme / count if count > 0 else 0
+    loss_phoneme = loss_phoneme / count if count > 0 else loss_phoneme
+
     return loss_phoneme
 
 def train():
@@ -287,7 +288,7 @@ def validate(model, val_dataloader, criterion, accelerator):
     model.eval()
     val_phoneme_loss = 0
     num_batches = 0
-    
+
     with torch.no_grad():
         for batch in val_dataloader:
             loss_phoneme = process_batch(model, batch, criterion, accelerator)
