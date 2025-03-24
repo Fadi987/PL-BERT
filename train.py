@@ -8,7 +8,7 @@ from collections import deque
 # Third-party imports
 import torch
 from torch import nn
-from datasets import load_from_disk
+from datasets import load_dataset
 import wandb
 import numpy as np
 
@@ -27,7 +27,7 @@ from char_indexer import symbols
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Train phoneme-level BERT model")
-    parser.add_argument("--config_path", type=str, default="external/pl_bert/configs/config.yml", help="Path to config file")
+    parser.add_argument("--config_path", type=str, default="configs/config.yml", help="Path to config file")
     parser.add_argument("--run_name", type=str, default="default", help="Name of the run for organizing checkpoints")
     parser.add_argument("--resume", action="store_true", default=False, help="Resume training from latest checkpoint")
     return parser.parse_args()
@@ -146,7 +146,7 @@ def train():
     max_epochs = 10
     
     # Initialize components
-    criterion, accelerator = initialize_components(config, training_params, log_dir, args.resume)
+    criterion, accelerator = initialize_components(training_params, log_dir, args.resume)
     
     # Initialize wandb and metrics tracking
     phoneme_losses = initialize_metrics_tracking(accelerator, config, log_interval)
@@ -246,11 +246,7 @@ def initialize_metrics_tracking(accelerator, config, log_interval):
 def setup_dataset_and_dataloader(config, accelerator):
     """Load dataset and create dataloader."""
     # Load the processed dataset from the output directory specified in config
-    dataset_path = os.path.join(
-        config['preprocess_params']['preprocess_dir'],
-        config['preprocess_params']['output_dir']
-    )
-    dataset = load_from_disk(dataset_path)
+    dataset = load_dataset(config['training_params']['training_dataset'])
     
     batch_size = config['training_params']['batch_size']
     train_dataloader, val_dataloader = build_dataloader(
@@ -258,6 +254,7 @@ def setup_dataset_and_dataloader(config, accelerator):
         batch_size=batch_size, 
         num_workers=0, 
         device=accelerator.device, 
+        use_token_ids=False,
         dataset_config=config['dataset_params']
     )
     

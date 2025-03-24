@@ -19,6 +19,7 @@ training_params:
   num_process: 1 # number of GPUs
   num_steps: 1000000
   learning_rate: 1e-4
+  training_dataset: "fadi77/wikipedia_20231101.ar.phonemized"
 
 dataset_params:
   word_separator: 87 # token idx used for word separation (W)
