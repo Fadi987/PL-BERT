@@ -18,7 +18,7 @@ training_params:
   log_interval: 10
   num_process: 1 # number of GPUs
   num_steps: 1000000
-  learning_rate: 1e-4
+  learning_rate: 7e-5
   training_dataset: "fadi77/wikipedia_20231101.ar.phonemized"
 
 dataset_params:

@@ -30,6 +30,7 @@ preprocess_image = modal.Image.debian_slim(
 training_image = modal.Image.debian_slim(
     ).pip_install_from_requirements(
     "../arabic_audio_ai/requirements.txt"
+    ).env({"HF_HOME": "/pl_bert/hf_cache"}
     ).add_local_dir(
     "configs", remote_path="/root/configs")
 

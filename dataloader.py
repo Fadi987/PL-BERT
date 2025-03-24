@@ -294,4 +294,4 @@ class PhonemeOnlyCollater(object):
             input_lengths[idx] = text_size
             batch_masked_indices[idx] = masked_indices
 
-        return batch_masked_phonemes, batch_phoneme_labels, input_lengths, batch_masked_indices
+        return batch_phoneme_labels, batch_masked_phonemes, input_lengths, batch_masked_indices
