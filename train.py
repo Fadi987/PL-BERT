@@ -128,7 +128,7 @@ def calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_i
                                  _text_input[:_text_length][_masked_indices])
             loss_phoneme += loss_tmp
             count += 1
-    loss_phoneme = loss_phoneme / count if count > 0 else torch.tensor(0.0, device=phoneme_pred.device)
+    loss_phoneme = loss_phoneme / count if count > 0 else torch.tensor(0.0, device=phoneme_pred.device, requires_grad=True)
 
     return loss_phoneme
 
