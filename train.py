@@ -172,20 +172,20 @@ def train():
     token_losses, phoneme_losses, total_losses = initialize_metrics_tracking(accelerator, config, log_interval)
     
     # Setup dataset and dataloader
-    train_dataloader = setup_dataset_and_dataloader(config, accelerator)
+    train_dataloader, val_dataloader = setup_dataset_and_dataloader(config, accelerator)
     
     # Initialize model
     bert, optimizer, current_step = initialize_model(config, tokenizer, log_dir, args.resume, accelerator)
     
     # Prepare for distributed training
-    bert, optimizer, train_dataloader = accelerator.prepare(
-        bert, optimizer, train_dataloader
+    bert, optimizer, train_dataloader, val_dataloader = accelerator.prepare(
+        bert, optimizer, train_dataloader, val_dataloader
     )
 
     # Start training loop
     accelerator.print('Start training...')
     current_step, current_epoch = train_loop(
-        bert, optimizer, train_dataloader, criterion, accelerator,
+        bert, optimizer, train_dataloader, val_dataloader, criterion, accelerator,
         current_step, num_steps, save_interval, log_interval,
         token_losses, phoneme_losses, total_losses, log_dir, max_epochs
     )
@@ -278,16 +278,15 @@ def setup_dataset_and_dataloader(config, accelerator):
     dataset = load_from_disk(dataset_path)
     
     batch_size = config['training_params']['batch_size']
-    train_dataloader = build_dataloader(
+    train_dataloader, val_dataloader = build_dataloader(
         dataset, 
-        validation=False, 
         batch_size=batch_size, 
         num_workers=0, 
         device=accelerator.device, 
         dataset_config=config['dataset_params']
     )
     
-    return train_dataloader
+    return train_dataloader, val_dataloader
 
 def initialize_model(config, tokenizer, log_dir, resume, accelerator):
     """Initialize model, optimizer, and load checkpoint if resuming."""
@@ -312,7 +311,67 @@ def initialize_model(config, tokenizer, log_dir, resume, accelerator):
     
     return bert, optimizer, current_step
 
-def train_loop(model, optimizer, dataloader, criterion, accelerator, 
+def validate(model, val_dataloader, criterion, accelerator):
+    """Run validation and return metrics."""
+    model.eval()
+    val_token_loss = 0
+    val_phoneme_loss = 0
+    val_total_loss = 0
+    num_batches = 0
+    
+    with torch.no_grad():
+        for batch in val_dataloader:
+            loss_token, loss_phoneme, loss = process_batch(model, batch, criterion, accelerator)
+            val_token_loss += loss_token.item()
+            val_phoneme_loss += loss_phoneme.item()
+            val_total_loss += loss.item()
+            num_batches += 1
+    
+    # Calculate average losses
+    val_token_loss /= num_batches
+    val_phoneme_loss /= num_batches
+    val_total_loss /= num_batches
+    
+    model.train()
+    return val_token_loss, val_phoneme_loss, val_total_loss
+
+def run_validation_and_log(model, val_dataloader, criterion, accelerator, current_step, current_epoch):
+    """Run validation and log the results.
+    
+    Args:
+        model: The model to validate
+        val_dataloader: Validation dataloader
+        criterion: Loss function
+        accelerator: Accelerator instance for distributed training
+        current_step: Current training step
+        current_epoch: Current training epoch
+    
+    Returns:
+        tuple: (val_token_loss, val_phoneme_loss, val_total_loss)
+    """
+    # Run validation
+    val_token_loss, val_phoneme_loss, val_total_loss = validate(
+        model, val_dataloader, criterion, accelerator
+    )
+    
+    # Log validation metrics
+    if accelerator.is_main_process:
+        wandb.log({
+            "val_token_loss": val_token_loss,
+            "val_phoneme_loss": val_phoneme_loss,
+            "val_total_loss": val_total_loss,
+            "step": current_step,
+            "epoch": current_epoch
+        })
+        
+    accelerator.print(f"Validation at step {current_step}: "
+                     f"Token Loss: {val_token_loss:.4f}, "
+                     f"Phoneme Loss: {val_phoneme_loss:.4f}, "
+                     f"Total Loss: {val_total_loss:.4f}")
+    
+    return val_token_loss, val_phoneme_loss, val_total_loss
+
+def train_loop(model, optimizer, train_dataloader, val_dataloader, criterion, accelerator, 
                current_step, num_steps, save_interval, log_interval,
                token_losses, phoneme_losses, total_losses, log_dir, max_epochs):
     """Main training loop."""
@@ -322,7 +381,7 @@ def train_loop(model, optimizer, dataloader, criterion, accelerator,
         current_epoch += 1
         accelerator.print(f'Starting epoch {current_epoch}')
         
-        for _, batch in enumerate(dataloader):
+        for _, batch in enumerate(train_dataloader):
             # Process batch and compute loss
             loss_token, loss_phoneme, loss = process_batch(model, batch, criterion, accelerator)
             
@@ -340,9 +399,12 @@ def train_loop(model, optimizer, dataloader, criterion, accelerator,
                 log_interval, current_epoch
             )
             
-            # Save checkpoint if needed
+            # Save checkpoint and run validation if needed
             if (current_step) % save_interval == 0:
                 save_checkpoint(model, optimizer, current_step, log_dir, accelerator, current_epoch)
+                
+                # Run validation and log results
+                run_validation_and_log(model, val_dataloader, criterion, accelerator, current_step, current_epoch)
             
             # Check if training should end based on steps
             if current_step >= num_steps:
