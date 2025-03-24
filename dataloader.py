@@ -5,7 +5,7 @@ import numpy as np
 import random
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 
 from char_indexer import CharacterIndexer, PHONEME_MASK, PHONEME_SEPARATOR, PUNCTUATION
 
@@ -222,8 +222,24 @@ class Collater(object):
 
         return batch_token_ids, batch_phoneme_labels, batch_masked_phonemes, input_lengths, batch_masked_indices
 
-def build_dataloader(df, batch_size, validation, device, dataset_config, use_token_ids, **kwargs):
+def build_dataloader(df, batch_size, device, dataset_config, use_token_ids, num_workers=0, **kwargs):
+    # Create the full dataset
     dataset = MaskedPhonemeDataset(df, use_token_ids=use_token_ids, **dataset_config)
+    
+    # Calculate validation size (min of 5% of dataset and 10000)
+    total_size = len(dataset)
+    val_size = min(int(total_size * 0.05), 10000)
+    train_size = total_size - val_size
+    
+    # Create random indices for train and validation splits
+    indices = list(range(total_size))
+    random.shuffle(indices)
+    train_indices = indices[:train_size]
+    val_indices = indices[train_size:]
+    
+    # Create subset datasets
+    train_dataset = Subset(dataset, train_indices)
+    val_dataset = Subset(dataset, val_indices)
     
     # Use appropriate collator based on whether we're using token_ids
     if use_token_ids:
@@ -231,10 +247,31 @@ def build_dataloader(df, batch_size, validation, device, dataset_config, use_tok
     else:
         collate_fn = PhonemeOnlyCollater()
     
-    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=(not validation), drop_last=(not validation), 
-                            collate_fn=collate_fn, pin_memory=(device != 'cpu'), **kwargs)
-
-    return data_loader
+    # Create train dataloader
+    train_loader = DataLoader(
+        train_dataset, 
+        batch_size=batch_size, 
+        shuffle=True, 
+        drop_last=True, 
+        collate_fn=collate_fn, 
+        pin_memory=(device != 'cpu'),
+        num_workers=num_workers,
+        **kwargs
+    )
+    
+    # Create validation dataloader
+    val_loader = DataLoader(
+        val_dataset, 
+        batch_size=batch_size, 
+        shuffle=False, 
+        drop_last=False, 
+        collate_fn=collate_fn, 
+        pin_memory=(device != 'cpu'),
+        num_workers=num_workers,
+        **kwargs
+    )
+    
+    return train_loader, val_loader
 
 class PhonemeOnlyCollater(object):
     def __call__(self, batch):
