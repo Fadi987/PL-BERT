@@ -246,7 +246,7 @@ def initialize_metrics_tracking(accelerator, config, log_interval):
 def setup_dataset_and_dataloader(config, accelerator):
     """Load dataset and create dataloader."""
     # Load the processed dataset from the output directory specified in config
-    dataset = load_dataset(config['training_params']['training_dataset'])
+    dataset = load_dataset(config['training_params']['training_dataset'])['train']
     
     batch_size = config['training_params']['batch_size']
     train_dataloader, val_dataloader = build_dataloader(
@@ -384,9 +384,7 @@ def process_batch(model, batch, criterion, accelerator):
     
     return loss_phoneme
 
-def update_metrics_and_log(accelerator, loss_phoneme,
-                          phoneme_losses,
-                          log_interval, current_epoch):
+def update_metrics_and_log(accelerator, loss_phoneme, phoneme_losses, log_interval, current_epoch):
     """Update metrics tracking and log to wandb."""
     # Update rolling window queues
     phoneme_losses.append(loss_phoneme.item())
