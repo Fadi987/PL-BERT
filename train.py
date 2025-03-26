@@ -8,7 +8,7 @@ from collections import deque
 # Third-party imports
 import torch
 from torch import nn
-from datasets import load_from_disk
+from datasets import load_dataset
 import wandb
 import numpy as np
 
@@ -16,21 +16,20 @@ import numpy as np
 from accelerate import Accelerator, DistributedDataParallelKwargs
 
 # Transformers imports
-from transformers import AlbertConfig, AlbertModel, AutoTokenizer
+from transformers import AlbertConfig, AlbertModel 
 from torch.optim import AdamW
 
 # Local imports
 from dataloader import build_dataloader
-from model import MultiTaskModel
+from model import PhonemeOnlyModel
 from char_indexer import symbols
 
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Train phoneme-level BERT model")
-    parser.add_argument("--config_path", type=str, default="external/pl_bert/configs/config.yml", help="Path to config file")
+    parser.add_argument("--config_path", type=str, default="configs/config.yml", help="Path to config file")
     parser.add_argument("--run_name", type=str, default="default", help="Name of the run for organizing checkpoints")
-    parser.add_argument("--resume", action="store_true", default=False, help="Resume training from latest checkpoint")
-    return parser.parse_args()
+    return vars(parser.parse_args())
 
 def length_to_mask(lengths):
     batch_size = lengths.size(0)
@@ -106,26 +105,6 @@ def load_checkpoint(model, optimizer, log_dir, last_iter, accelerator):
     
     return model, optimizer
 
-def calculate_token_loss(token_pred, token_ids, input_lengths, criterion):
-    """
-    Calculate the token prediction loss.
-    
-    Args:
-        token_pred: Predicted token logits
-        token_ids: Ground truth token IDs
-        input_lengths: Length of each input sequence
-        criterion: Loss function
-        
-    Returns:
-        float: Average token loss
-    """
-    loss_token = 0
-    for _s2s_pred, _text_input, _text_length in zip(token_pred, token_ids, input_lengths):
-        loss_token += criterion(_s2s_pred[:_text_length], 
-                                _text_input[:_text_length])
-    loss_token /= token_ids.size(0)
-    return loss_token
-
 def calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_indices, criterion):
     """
     Calculate the phoneme prediction loss.
@@ -148,96 +127,91 @@ def calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_i
                                  _text_input[:_text_length][_masked_indices])
             loss_phoneme += loss_tmp
             count += 1
-    loss_phoneme = loss_phoneme / count if count > 0 else 0
+    loss_phoneme = loss_phoneme / count if count > 0 else torch.tensor(0.0, device=phoneme_pred.device, requires_grad=True)
+
     return loss_phoneme
 
-def train():
-    args = parse_args()
-    config_path = args.config_path
+def train(args = None):
+    if args is None: args = parse_args()
+    config_path = args['config_path']
     
     # Setup configuration and directories
-    config, log_dir = setup_config_and_directories(args, config_path)
+    config, log_dir, resuming = setup_config_and_directories(args, config_path)
     
     # Extract training parameters
     training_params = config['training_params']
     num_steps = training_params['num_steps']
     log_interval = training_params['log_interval']
     save_interval = training_params['save_interval']
-    max_epochs = 9
+    max_epochs = 10
     
     # Initialize components
-    tokenizer, criterion, accelerator = initialize_components(config, training_params, log_dir, args.resume)
+    criterion, accelerator = initialize_components(training_params, log_dir, resuming)
     
     # Initialize wandb and metrics tracking
-    token_losses, phoneme_losses, total_losses = initialize_metrics_tracking(accelerator, config, log_interval)
+    phoneme_losses = initialize_metrics_tracking(accelerator, config, log_interval)
     
     # Setup dataset and dataloader
-    train_dataloader = setup_dataset_and_dataloader(config, accelerator)
+    train_dataloader, val_dataloader = setup_dataset_and_dataloader(config, accelerator)
     
     # Initialize model
-    bert, optimizer, current_step = initialize_model(config, tokenizer, log_dir, args.resume, accelerator)
+    bert, optimizer, current_step = initialize_model(config, log_dir, resuming, accelerator)
     
     # Prepare for distributed training
-    bert, optimizer, train_dataloader = accelerator.prepare(
-        bert, optimizer, train_dataloader
+    bert, optimizer, train_dataloader, val_dataloader = accelerator.prepare(
+        bert, optimizer, train_dataloader, val_dataloader
     )
 
     # Start training loop
     accelerator.print('Start training...')
     current_step, current_epoch = train_loop(
-        bert, optimizer, train_dataloader, criterion, accelerator,
+        bert, optimizer, train_dataloader, val_dataloader, criterion, accelerator,
         current_step, num_steps, save_interval, log_interval,
-        token_losses, phoneme_losses, total_losses, log_dir, max_epochs
+        phoneme_losses, log_dir, max_epochs
     )
     
     accelerator.print(f'Training completed at step {current_step}, epoch {current_epoch}')
 
 def setup_config_and_directories(args, config_path):
-    """Setup configuration and directories based on resume flag."""
-    base_log_dir = None
-    log_dir = None
-    
-    # Load the appropriate config based on resume flag
-    if args.resume:
-        # When resuming, first check if the run directory exists
-        base_log_dir = yaml.safe_load(open(config_path))['training_params']['output_dir']
-        log_dir = os.path.join(base_log_dir, args.run_name)
-        
-        if not os.path.exists(log_dir):
-            raise FileNotFoundError(f"Cannot resume training: Run directory '{log_dir}' not found.")
-        
-        # Use the config from the run directory instead of the provided one
-        config_file = os.path.join(log_dir, os.path.basename(config_path))
-        if not os.path.exists(config_file):
-            raise FileNotFoundError(f"Cannot resume training: Config file not found in '{log_dir}'.")
-        
-        config = yaml.safe_load(open(config_file))
-    else:
-        # For new runs, use the provided config
-        config = yaml.safe_load(open(config_path))
+    """Setup configuration and directories based on run folder existence."""
+    # Load the provided config first
+    original_config = yaml.safe_load(open(config_path))
     
     # Set up log directory
-    base_log_dir = config['training_params']['output_dir']
-    log_dir = os.path.join(base_log_dir, args.run_name)
+    base_log_dir = original_config['training_params']['output_dir']
+    log_dir = os.path.join(base_log_dir, args['run_name'])
     
-    # Handle directory setup
-    if not args.resume:
-        # Start from scratch - remove existing directory if it exists
-        if os.path.exists(log_dir):
-            shutil.rmtree(log_dir)
+    # Check if run folder exists
+    if os.path.exists(log_dir):
+        # Run folder exists, check for config
+        config_file = os.path.join(log_dir, os.path.basename(config_path))
         
-        # Create fresh directory
+        if os.path.exists(config_file):
+            # Config exists, load it and prepare to resume
+            config = yaml.safe_load(open(config_file))
+            resuming = True
+        else:
+            # Config doesn't exist, clean directory and start fresh
+            for f in os.listdir(log_dir):
+                if f.startswith("step_"):
+                    os.remove(os.path.join(log_dir, f))
+            
+            # Copy the config file to the run directory
+            shutil.copy(config_path, config_file)
+            config = original_config
+            resuming = False
+    else:
+        # Run folder doesn't exist, create it and start fresh
         os.makedirs(log_dir, exist_ok=True)
         # Copy the config file to the run directory
         shutil.copy(config_path, os.path.join(log_dir, os.path.basename(config_path)))
+        config = original_config
+        resuming = False
     
-    return config, log_dir
+    return config, log_dir, resuming
 
-def initialize_components(config, training_params, log_dir, resume):
+def initialize_components(training_params, log_dir, resuming):
     """Initialize tokenizer, loss function, and accelerator."""
-    # Initialize tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(config['preprocess_params']['tokenizer'])
-    
     # Initialize loss function
     criterion = nn.CrossEntropyLoss()
     
@@ -248,56 +222,49 @@ def initialize_components(config, training_params, log_dir, resume):
                              kwargs_handlers=[ddp_kwargs])
     
     # Log status message
-    if resume:
+    if resuming:
         accelerator.print(f"Resuming training from '{log_dir}' with existing config.")
     else:
         accelerator.print(f"Starting new training run in '{log_dir}'.")
     
-    return tokenizer, criterion, accelerator
+    return criterion, accelerator
 
 def initialize_metrics_tracking(accelerator, config, log_interval):
     """Initialize wandb and metrics tracking queues."""
     # Initialize wandb
     if accelerator.is_main_process:
-        wandb.init(project="pl-bert", config=config)
+        wandb.init(project="pl_bert_phoneme_only", config=config)
     
     # Initialize rolling window queues for losses
-    token_losses = deque(maxlen=log_interval)
     phoneme_losses = deque(maxlen=log_interval)
-    total_losses = deque(maxlen=log_interval)
     
-    return token_losses, phoneme_losses, total_losses
+    return phoneme_losses
 
 def setup_dataset_and_dataloader(config, accelerator):
     """Load dataset and create dataloader."""
     # Load the processed dataset from the output directory specified in config
-    dataset_path = os.path.join(
-        config['preprocess_params']['preprocess_dir'],
-        config['preprocess_params']['output_dir']
-    )
-    dataset = load_from_disk(dataset_path)
+    dataset = load_dataset(config['training_params']['training_dataset'])['train']
     
     batch_size = config['training_params']['batch_size']
-    train_dataloader = build_dataloader(
+    train_dataloader, val_dataloader = build_dataloader(
         dataset, 
-        validation=False, 
         batch_size=batch_size, 
         num_workers=0, 
         device=accelerator.device, 
+        use_token_ids=False,
         dataset_config=config['dataset_params']
     )
     
-    return train_dataloader
+    return train_dataloader, val_dataloader
 
-def initialize_model(config, tokenizer, log_dir, resume, accelerator):
+def initialize_model(config, log_dir, resuming, accelerator):
     """Initialize model, optimizer, and load checkpoint if resuming."""
     albert_base_configuration = AlbertConfig(vocab_size=len(symbols), **config['model_params'])
     
     bert = AlbertModel(albert_base_configuration)
-    bert = MultiTaskModel(
+    bert = PhonemeOnlyModel(
         bert, 
         num_phonemes=len(symbols), 
-        num_tokens=tokenizer.vocab_size, 
         hidden_size=config['model_params']['hidden_size']
     )
     
@@ -305,44 +272,99 @@ def initialize_model(config, tokenizer, log_dir, resume, accelerator):
     
     optimizer = AdamW(bert.parameters(), lr=float(config['training_params']['learning_rate']))
     
-    if is_checkpoint_found and resume:
+    if is_checkpoint_found and resuming:
         bert, optimizer = load_checkpoint(bert, optimizer, log_dir, current_step, accelerator)
     else:
         current_step = 0
     
     return bert, optimizer, current_step
 
-def train_loop(model, optimizer, dataloader, criterion, accelerator, 
+def validate(model, val_dataloader, criterion, accelerator):
+    """Run validation and return metrics."""
+    model.eval()
+    val_phoneme_loss = 0
+    num_batches = 0
+
+    with torch.no_grad():
+        for batch in val_dataloader:
+            loss_phoneme = process_batch(model, batch, criterion, accelerator)
+            val_phoneme_loss += loss_phoneme.item()
+            num_batches += 1
+    
+    # Calculate average losses
+    val_phoneme_loss /= num_batches
+    
+    model.train()
+    return val_phoneme_loss
+
+def run_validation_and_log(model, val_dataloader, criterion, accelerator, current_step, current_epoch):
+    """Run validation and log the results.
+    
+    Args:
+        model: The model to validate
+        val_dataloader: Validation dataloader
+        criterion: Loss function
+        accelerator: Accelerator instance for distributed training
+        current_step: Current training step
+        current_epoch: Current training epoch
+    
+    Returns:
+        float: val_phoneme_loss
+    """
+    # Run validation
+    val_phoneme_loss = validate(
+        model, val_dataloader, criterion, accelerator
+    )
+    
+    # Log validation metrics
+    if accelerator.is_main_process:
+        wandb.log({
+            "val_phoneme_loss": val_phoneme_loss,
+            "step": current_step,
+            "epoch": current_epoch
+        })
+        
+    accelerator.print(f"Validation at step {current_step}: "
+                     f"Phoneme Loss: {val_phoneme_loss:.4f}")
+    
+    return val_phoneme_loss
+
+def train_loop(model, optimizer, train_dataloader, val_dataloader, criterion, accelerator, 
                current_step, num_steps, save_interval, log_interval,
-               token_losses, phoneme_losses, total_losses, log_dir, max_epochs):
+               phoneme_losses, log_dir, max_epochs):
     """Main training loop."""
     current_epoch = 0
+
+    run_validation_and_log(model, val_dataloader, criterion, accelerator, current_step, current_epoch)
     
     while current_epoch < max_epochs:
         current_epoch += 1
         accelerator.print(f'Starting epoch {current_epoch}')
         
-        for _, batch in enumerate(dataloader):
+        for _, batch in enumerate(train_dataloader):
             # Process batch and compute loss
-            loss_token, loss_phoneme, loss = process_batch(model, batch, criterion, accelerator)
+            loss_phoneme = process_batch(model, batch, criterion, accelerator)
             
             # Optimization step
             optimizer.zero_grad()
-            accelerator.backward(loss)
+            accelerator.backward(loss_phoneme)
             optimizer.step()
             
             current_step += 1
             
             # Update metrics and log
             update_metrics_and_log(
-                accelerator, loss_token, loss_phoneme, loss,
-                token_losses, phoneme_losses, total_losses,
+                accelerator, loss_phoneme,
+                phoneme_losses,
                 log_interval, current_epoch
             )
             
-            # Save checkpoint if needed
+            # Save checkpoint and run validation if needed
             if (current_step) % save_interval == 0:
                 save_checkpoint(model, optimizer, current_step, log_dir, accelerator, current_epoch)
+                
+                # Run validation and log results
+                run_validation_and_log(model, val_dataloader, criterion, accelerator, current_step, current_epoch)
             
             # Check if training should end based on steps
             if current_step >= num_steps:
@@ -352,42 +374,31 @@ def train_loop(model, optimizer, dataloader, criterion, accelerator,
 
 def process_batch(model, batch, criterion, accelerator):
     """Process a batch of data and compute losses."""
-    token_ids, phoneme_labels, masked_phonemes, input_lengths, masked_indices = batch
+    phoneme_labels, masked_phonemes, input_lengths, masked_indices = batch
     text_mask = length_to_mask(torch.Tensor(input_lengths)).to(accelerator.device)
     
-    phoneme_pred, token_pred = model(masked_phonemes, attention_mask=(~text_mask).int())
+    phoneme_pred = model(masked_phonemes, attention_mask=(~text_mask).int())
     
     loss_phoneme = calculate_phoneme_loss(phoneme_pred, phoneme_labels, input_lengths, masked_indices, criterion)
-    loss_token = calculate_token_loss(token_pred, token_ids, input_lengths, criterion)
     
-    loss = loss_token + loss_phoneme
-    
-    return loss_token, loss_phoneme, loss
+    return loss_phoneme
 
-def update_metrics_and_log(accelerator, loss_token, loss_phoneme, loss,
-                          token_losses, phoneme_losses, total_losses,
-                          log_interval, current_epoch):
+def update_metrics_and_log(accelerator, loss_phoneme, phoneme_losses, log_interval, current_epoch):
     """Update metrics tracking and log to wandb."""
     # Update rolling window queues
-    token_losses.append(loss_token.item())
     phoneme_losses.append(loss_phoneme.item())
-    total_losses.append(loss.item())
     
     # Log metrics to wandb
     if accelerator.is_main_process:
         log_dict = {
-            "token_loss": loss_token.item(),
             "phoneme_loss": loss_phoneme.item(),
-            "total_loss": loss.item(),
             "epoch": current_epoch
         }
         
         # Add rolling window metrics if we have enough data
-        if len(total_losses) == log_interval:
+        if len(phoneme_losses) == log_interval:
             log_dict.update({
-                "token_loss_avg": np.mean(token_losses),
-                "phoneme_loss_avg": np.mean(phoneme_losses),
-                "total_loss_avg": np.mean(total_losses)
+                "phoneme_loss_avg": np.mean(phoneme_losses)
             })
             
         wandb.log(log_dict)
