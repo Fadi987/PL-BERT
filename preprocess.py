@@ -158,24 +158,6 @@ def diacritize_text(text, diacritizer=None):
     # Return the reconstructed diacritized text
     return diacritized_text
 
-def phonemize_with_tokenizer(text, global_phonemizer, tokenizer):
-    """Convert text to phonemes using tokenizer.
-    
-    Args:
-        text: Input text to phonemize
-        global_phonemizer: Phonemizer instance
-        tokenizer: Tokenizer instance
-        
-    Returns:
-        Dictionary with phonemes and token_ids
-    """
-    tokens = tokenizer.tokenize(text)
-    token_ids = [tokenizer.convert_tokens_to_ids(token) for token in tokens]
-    phonemes = [global_phonemizer.phonemize([token.replace("#", "")], strip=True)[0] 
-               if token not in PUNCTUATION else token for token in tokens]
-    
-    return {'phonemes': phonemes, 'token_ids': token_ids}
-
 def parse_args():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(description="Clean/phonemize/diacritize text data for PL-BERT training")
