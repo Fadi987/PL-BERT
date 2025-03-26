@@ -7,7 +7,6 @@ from datasets import load_dataset, load_from_disk, concatenate_datasets, Dataset
 from pebble import ProcessPool
 import phonemizer
 from tqdm.auto import tqdm
-from transformers import AutoTokenizer
 import yaml
 import numpy as np
 
@@ -440,7 +439,9 @@ def main_phonemize(dataset_path, output_dir=None):
     
     # Process the dataset with phonemization
     if output_dir is None:
-        output_dir = os.path.basename(dataset_path).replace('cleaned', 'phonemized')
+        # Append 'phonemized' to the filename instead of replacing
+        base_dir = os.path.basename(dataset_path)
+        output_dir = f"{base_dir}.phonemized"
     
     output_path = process_dataset(
         dataset=dataset,
@@ -502,7 +503,9 @@ def main_diacritize(dataset_path, output_dir=None, sample_size=200000):
     # Setup output path
     root_directory = os.path.dirname(dataset_path)
     if output_dir is None:
-        output_dir = os.path.basename(dataset_path).replace('cleaned', 'diacritized')
+        # Append 'diacritized' to the filename instead of replacing
+        base_dir = os.path.basename(dataset_path)
+        output_dir = f"{base_dir}.diacritized"
     output_path = os.path.join(root_directory, output_dir)
     
     # Process the dataset sequentially with tqdm
