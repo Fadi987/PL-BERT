@@ -125,7 +125,7 @@ def diacritize_text(text, diacritizer=None):
     
     # Diacritize the segments if diacritizer is provided
     if diacritizer is not None:
-        diacritized_segments = diacritizer.do_tashkeel_batch(segments, batch_size=16, verbose=False)
+        diacritized_segments = diacritizer.do_tashkeel(segments)
     else:
         diacritized_segments = segments
 

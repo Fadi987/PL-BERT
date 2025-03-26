@@ -1,6 +1,7 @@
 import os
 import sys
 import torch
+from typing import List 
 
 # Get directory of the current script file instead of working directory
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -33,9 +34,9 @@ class CattTashkeel:
         self.model.load_state_dict(torch.load(self.ckpt_path, map_location=self.device))
         self.model.eval().to(self.device)
 
-    def do_tashkeel_batch(self, x, batch_size, verbose):
-        x = [self.remove_non_arabic(i) for i in x]
-        x_tashkeel = self.model.do_tashkeel_batch(x, batch_size, verbose)
+    def do_tashkeel(self, x: List[str]) -> List[str]:
+        x = [self.remove_non_arabic(segment) for segment in x]
+        x_tashkeel = self.model.do_tashkeel_batch(x, batch_size=16, verbose=False)
         return x_tashkeel
 class MantoqG2P:
     def __init__(self):
@@ -45,6 +46,6 @@ class MantoqG2P:
 
         self.g2p = mantoq.g2p
 
-    def do_tashkeel(self, x: str) -> str:
-        diacritized_text, phonemes = self.g2p(x)
-        return diacritized_text
+    def do_tashkeel(self, x: List[str]) -> List[str]:
+        x = [self.g2p(segment) for segment in x]
+        return [diacritized_text for diacritized_text, _ in x]
