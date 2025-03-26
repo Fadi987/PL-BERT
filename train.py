@@ -29,7 +29,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Train phoneme-level BERT model")
     parser.add_argument("--config_path", type=str, default="configs/config.yml", help="Path to config file")
     parser.add_argument("--run_name", type=str, default="default", help="Name of the run for organizing checkpoints")
-    return parser.parse_args()
+    return vars(parser.parse_args())
 
 def length_to_mask(lengths):
     batch_size = lengths.size(0)
