@@ -13,6 +13,7 @@ import numpy as np
 from char_indexer import PUNCTUATION
 from dataloader import TruncatedTextDataset
 from text_normalize import convert_numbers_to_arabic_words, filter_non_arabic_words, remove_diacritics, separate_words_and_punctuation, clean_text
+from util_models import CattTashkeel
 
 def standardize_text(text):
     """Perform text cleaning operations without phonemization.
@@ -455,68 +456,91 @@ def main_phonemize(dataset_path, output_dir=None):
     
     return output_path
 
-def diacritize_wrapper(sample, diacritizer_instance):
-    """Wrapper function to diacritize a sample using the provided diacritizer.
+def main_diacritize(dataset_path, output_dir=None, sample_size=200000):
+    """Main function to orchestrate the diacritization pipeline.
     
     Args:
-        sample: Sample containing text to diacritize
-        diacritizer_instance: Path to the mantoq directory
+        dataset_path: Path to the dataset to diacritize
+        output_dir: Optional output directory name
+        sample_size: Number of samples to use (default: 200k)
         
     Returns:
-        Dictionary with diacritized text
+        Path to the processed dataset
     """
-    # Import mantoq in the worker process
-    import sys
-    sys.path.insert(0, diacritizer_instance)
-    import mantoq
-    sys.path.remove(diacritizer_instance)
-    
-    g2p = mantoq.g2p
-    
-    # Remove diacritics before diacritizing to replicate CATT Tashkeel model conditioning
-    text = remove_diacritics(sample['text'])
-    diacritized_text, _ = g2p(text)
-    return {'text': diacritized_text}
-
-def main_diacritize(dataset_path, output_dir=None):
-    """Main function to orchestrate the diacritization pipeline."""
     # Load the dataset
     print(f"Loading dataset from {dataset_path}...")
     dataset = load_from_disk(dataset_path)
     
-    # Get the path to mantoq
-    mantoq_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "../mantoq")
-    print(f"Mantoq path: {mantoq_path}")
+    # Create a TruncatedTextDataset
+    print("Creating truncated dataset...")
+    truncated_dataset = TruncatedTextDataset(dataset, max_seq_length=512)
     
-    # Setup processing parameters
+    # Sample from the dataset
+    print(f"Sampling {sample_size} examples from dataset...")
+    if len(truncated_dataset) > sample_size:
+        # Generate random indices without replacement
+        indices = np.random.choice(len(truncated_dataset), size=sample_size, replace=False)
+        # Create a new dataset with only the sampled examples
+        sampled_dataset = Dataset.from_dict({
+            'id': [truncated_dataset[int(idx)]['id'] for idx in indices],
+            'url': [truncated_dataset[int(idx)]['url'] for idx in indices],
+            'title': [truncated_dataset[int(idx)]['title'] for idx in indices],
+            'original_text': [truncated_dataset[int(idx)]['text'] for idx in indices]
+        })
+    else:
+        print(f"Warning: Requested sample size {sample_size} is larger than dataset size {len(truncated_dataset)}. Using full dataset.")
+        sampled_dataset = Dataset.from_dict({
+            'id': [truncated_dataset[int(idx)]['id'] for idx in range(len(truncated_dataset))],
+            'url': [truncated_dataset[int(idx)]['url'] for idx in range(len(truncated_dataset))],
+            'title': [truncated_dataset[int(idx)]['title'] for idx in range(len(truncated_dataset))],
+            'original_text': [truncated_dataset[int(idx)]['text'] for idx in range(len(truncated_dataset))]
+        })
+    
+    # Initialize diacritizer
+    print("Initializing diacritizer...")
+    diacritizer = CattTashkeel()
+    
+    # Setup output path
     root_directory = os.path.dirname(dataset_path)
-    
-    # Process the dataset with diacritization
     if output_dir is None:
         # Append 'diacritized' to the filename instead of replacing
         base_dir = os.path.basename(dataset_path)
         output_dir = f"{base_dir}.diacritized"
-   
-    output_path = process_dataset(
-        dataset=dataset,
-        root_directory=root_directory,
-        process_fn=diacritize_wrapper,
-        process_args=mantoq_path,  # Pass the path instead of the instance
-        output_dir=output_dir,
-        max_workers=4,
-        timeout=3600,
-        max_try_count=3,
-    )
+    output_path = os.path.join(root_directory, output_dir)
+    
+    # Process the dataset sequentially with tqdm
+    print("Diacritizing texts sequentially...")
+    diacritized_texts = []
+    
+    for text in tqdm(sampled_dataset['original_text'], desc="Diacritizing"):
+        # remove diacritics before diacritizing to replicate CATT Tashkeel model conditioning
+        diacritized_text = diacritize_text(remove_diacritics(text), diacritizer)
+        diacritized_texts.append(diacritized_text)
+    
+    # Create and save the processed dataset
+    processed_dataset = Dataset.from_dict({
+        'id': sampled_dataset['id'],
+        'url': sampled_dataset['url'],
+        'title': sampled_dataset['title'],
+        'original_text': sampled_dataset['original_text'],
+        'text': diacritized_texts
+    })
+    
+    os.makedirs(output_path, exist_ok=True)
+    processed_dataset.save_to_disk(output_path)
+    print(f'Dataset saved to {output_path}')
+    print(f'Total samples: {len(processed_dataset)}')
     
     return output_path
 
+
 if __name__ == "__main__":
     # Clean dataset as a common first step
-    # cleaned_path = main_clean()
+    cleaned_path = main_clean()
 
     # Phonemize dataset
-    # phonemized_path = main_phonemize(cleaned_path)
+    phonemized_path = main_phonemize(cleaned_path)
 
     # Diacritize and phonemize a sub-sample of the dataset for fine-tuning 
-    diacritized_path = main_diacritize("data/pl_bert/wikipedia_20231101.ar.cleaned")
-    # main_phonemize(diacritized_path)
+    diacritized_path = main_diacritize(cleaned_path)
+    main_phonemize(diacritized_path)

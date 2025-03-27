@@ -20,6 +20,7 @@ training_params:
   num_steps: 1000000
   learning_rate: 7e-5
   training_dataset: "fadi77/wikipedia_20231101.ar.phonemized"
+  split: "diacritized"
 
 dataset_params:
   word_separator: 87 # token idx used for word separation (W)
@@ -29,6 +30,7 @@ dataset_params:
   replace_prob: 0.1 # probablity to replace phonemes
 
 model_params:
+  pretrained_model: "/pl_bert/checkpoints/modal_phoneme_only_non_diacritics/step_116000.pth"
   hidden_size: 768
   num_attention_heads: 12
   intermediate_size: 2048

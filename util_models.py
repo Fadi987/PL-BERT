@@ -38,3 +38,14 @@ class CattTashkeel:
         x = [self.remove_non_arabic(segment) for segment in x]
         x_tashkeel = self.model.do_tashkeel_batch(x, batch_size=16, verbose=False)
         return x_tashkeel
+class MantoqG2P:
+    def __init__(self):
+        sys.path.insert(0, MANTOQ_PATH)
+        import mantoq
+        sys.path.remove(MANTOQ_PATH)
+
+        self.g2p = mantoq.g2p
+
+    def do_tashkeel(self, x: List[str]) -> List[str]:
+        x = [self.g2p(segment) for segment in x]
+        return [diacritized_text for diacritized_text, _ in x]

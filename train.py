@@ -78,7 +78,7 @@ def find_latest_checkpoint(log_dir):
     
     return is_checkpoint_found, last_iter
 
-def load_checkpoint(model, optimizer, log_dir, last_iter, accelerator):
+def load_checkpoint(model, optimizer, checkpoint_path, accelerator):
     """
     Load model and optimizer state from a checkpoint.
     
@@ -92,7 +92,6 @@ def load_checkpoint(model, optimizer, log_dir, last_iter, accelerator):
     Returns:
         tuple: (model, optimizer) with loaded state
     """
-    checkpoint_path = os.path.join(log_dir, f"step_{last_iter}.pth")
     checkpoint = torch.load(checkpoint_path, map_location=accelerator.device)
     
     # Remove 'module.' prefix from keys if present
@@ -101,7 +100,7 @@ def load_checkpoint(model, optimizer, log_dir, last_iter, accelerator):
     model.load_state_dict(new_state_dict, strict=False)
     optimizer.load_state_dict(checkpoint['optimizer'])
     
-    accelerator.print(f'Checkpoint {last_iter} loaded.')
+    accelerator.print(f'Checkpoint {checkpoint_path} loaded.')
     
     return model, optimizer
 
@@ -233,7 +232,7 @@ def initialize_metrics_tracking(accelerator, config, log_interval):
     """Initialize wandb and metrics tracking queues."""
     # Initialize wandb
     if accelerator.is_main_process:
-        wandb.init(project="pl_bert_phoneme_only", config=config)
+        wandb.init(project="pl_bert_phoneme_only_diacritized", config=config)
     
     # Initialize rolling window queues for losses
     phoneme_losses = deque(maxlen=log_interval)
@@ -243,7 +242,9 @@ def initialize_metrics_tracking(accelerator, config, log_interval):
 def setup_dataset_and_dataloader(config, accelerator):
     """Load dataset and create dataloader."""
     # Load the processed dataset from the output directory specified in config
-    dataset = load_dataset(config['training_params']['training_dataset'])['train']
+    dataset = load_dataset(config['training_params']['training_dataset'], split=config['training_params']['split'])
+
+    print(f"Dataset split: {config['training_params']['split']}. Dataset length: {len(dataset)}")
     
     batch_size = config['training_params']['batch_size']
     train_dataloader, val_dataloader = build_dataloader(
@@ -267,13 +268,18 @@ def initialize_model(config, log_dir, resuming, accelerator):
         num_phonemes=len(symbols), 
         hidden_size=config['model_params']['hidden_size']
     )
+
+    optimizer = AdamW(bert.parameters(), lr=float(config['training_params']['learning_rate']))
+
+    if config['model_params']['pretrained_model']:
+        print(f"Loading pretrained model from: {config['model_params']['pretrained_model']}")
+        bert, optimizer = load_checkpoint(bert, optimizer, config['model_params']['pretrained_model'], accelerator)
     
     is_checkpoint_found, current_step = find_latest_checkpoint(log_dir)
     
-    optimizer = AdamW(bert.parameters(), lr=float(config['training_params']['learning_rate']))
-    
+    checkpoint_path = os.path.join(log_dir, f"step_{current_step}.pth")
     if is_checkpoint_found and resuming:
-        bert, optimizer = load_checkpoint(bert, optimizer, log_dir, current_step, accelerator)
+        bert, optimizer = load_checkpoint(bert, optimizer, checkpoint_path, accelerator)
     else:
         current_step = 0
     
